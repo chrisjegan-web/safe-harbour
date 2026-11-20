@@ -42,7 +42,7 @@ var draws={};            // pointerId -> boat being steered
 var soundOn=true;
 try{best=parseInt(localStorage.getItem('safeharbour.best')||'0',10)||0;}catch(e){}
 try{soundOn=localStorage.getItem('safeharbour.sound')!=='off';}catch(e){}
-try{var mi=localStorage.getItem('safeharbour.map');if(mi!==null)mapIdx=Math.max(0,Math.min(1,parseInt(mi,10)||0));}catch(e){}
+try{var mi=localStorage.getItem('safeharbour.map');if(mi!==null)mapIdx=Math.max(0,parseInt(mi,10)||0);}catch(e){}
 
 /* ---------- helpers ---------- */
 function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;var t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
@@ -126,8 +126,103 @@ MAPS.push({name:'Lighthouse Isle',send:'R',recv:'L',
   }
 });
 
+/* --- The Narrows: a channel between two banks, traffic from left and right --- */
+function bump(x,c,w){var d=(x-c)/w;return Math.exp(-d*d);}
+function nTop(x){return 80+45*bump(x,0.35*W,0.11*W)+4*Math.sin(x/37);}
+function nBot(x){return H-80-45*bump(x,0.65*W,0.11*W)+4*Math.sin(x/41+1);}
+MAPS.push({name:'The Narrows',send:'R',recv:'L',
+  land:function(x,y,i){return y<nTop(x)-i||y>nBot(x)+i;},
+  docks:function(){
+    var T=[[0.35,0],[0.58,1],[0.8,2]], B=[[0.18,1],[0.42,2],[0.88,0]], o=[], k, x;
+    for(k=0;k<3;k++){x=T[k][0]*W;o.push({x:x,y:nTop(x)+46,h:-Math.PI/2,col:T[k][1],wh:50});}
+    for(k=0;k<3;k++){x=Math.min(B[k][0]*W,W-70);o.push({x:x,y:nBot(x)-46,h:Math.PI/2,col:B[k][1],wh:50});}
+    return o;},
+  spawns:function(){return[{e:'L',a:nTop(0)+65,b:nBot(0)-65},{e:'R',a:nTop(W)+65,b:nBot(W)-65}];},
+  outline:function(g,o,wob){
+    var x; g.beginPath();
+    g.moveTo(-6,-6);for(x=-6;x<=W+6;x+=6)g.lineTo(x,nTop(x)+o+(wob?4*Math.sin(x/23+o):0));g.lineTo(W+6,-6);g.closePath();
+    g.moveTo(-6,H+6);for(x=-6;x<=W+6;x+=6)g.lineTo(x,nBot(x)-o-(wob?4*Math.sin(x/23+o):0));g.lineTo(W+6,H+6);g.closePath();
+  },
+  extras:function(g,R){
+    // a beacon on the southern headland, and rocks off both points
+    var hx=0.65*W, hy=nBot(hx)+26, k;
+    for(k=0;k<14;k++){var top=k<7, cx=(top?0.35:0.65)*W+(R()-0.5)*0.2*W, cy=top?nTop(cx)-2-R()*6:nBot(cx)+2+R()*6, rs=4+R()*5;
+      if(top&&Math.abs(cx-0.35*W)<60)continue;
+      g.fillStyle='rgba(30,40,45,.3)'; g.beginPath(); g.ellipse(cx+2,cy+2,rs*1.2,rs,R()*3,0,7); g.fill();
+      g.fillStyle=['#8d9196','#a3a7ab','#777c82'][(R()*3)|0]; g.beginPath(); g.ellipse(cx,cy,rs*1.2,rs,R()*3,0,7); g.fill();}
+    beacon(g,hx,hy);
+  },
+  clear:function(){var hx=0.65*W;return[[hx,nBot(hx)+26]];}
+});
+
+/* --- Crescent Bay: one sheltered bay, every ship comes and goes through the mouth at the bottom --- */
+function bay(){return {x:W/2,y:H+20,rx:W/2-70,ry:H-70};}
+MAPS.push({name:'Crescent Bay',send:'B',recv:'B',
+  land:function(x,y,i){var b=bay(),dx=(x-b.x)/(b.rx-i),dy=(y-b.y)/(b.ry-i);return dx*dx+dy*dy>1;},
+  docks:function(){
+    var b=bay(), A=[[-160,0],[-128,1],[-101,2],[-79,0],[-52,1],[-20,2]], o=[], k;
+    for(k=0;k<A.length;k++){
+      var a=A[k][0]*Math.PI/180, ex=b.x+b.rx*Math.cos(a), ey=b.y+b.ry*Math.sin(a);
+      var nx=Math.cos(a)/b.rx, ny=Math.sin(a)/b.ry, nl=Math.hypot(nx,ny); nx/=nl; ny/=nl;   // outward normal of the bay wall
+      o.push({x:ex-nx*46,y:ey-ny*46,h:Math.atan2(ny,nx),col:A[k][1],wh:50});
+    }
+    return o;},
+  spawns:function(){var b=bay();return[{e:'B',a:b.x-b.rx+110,b:b.x+b.rx-110}];},
+  outline:function(g,o,wob){
+    var b=bay(), a, w;
+    g.beginPath(); g.moveTo(-6,H+80); g.lineTo(-6,-6); g.lineTo(W+6,-6); g.lineTo(W+6,H+80);
+    for(a=0.12;a>=-Math.PI-0.12;a-=0.03){w=wob?3*Math.sin(a*19+o):0;g.lineTo(b.x+(b.rx-o-w)*Math.cos(a),b.y+(b.ry-o-w)*Math.sin(a));}
+    g.closePath();
+  },
+  extras:function(g,R){beacon(g,34,H-40);beacon(g,W-34,H-40);},
+  clear:function(){return[[34,H-40],[W-34,H-40]];}
+});
+
+/* --- Twin Isles: open sea, two islands, traffic from every side --- */
+function isles(){return[{x:0.27*W,y:Math.round(0.42*H),rx:72,ry:54,p:0.5},{x:0.72*W,y:Math.round(0.6*H),rx:72,ry:54,p:2.1}];}
+function isleF2(a,p){return 1+0.06*Math.sin(3*a+p)+0.04*Math.sin(5*a+p*2);}
+MAPS.push({name:'Twin Isles',send:'R',recv:'L',
+  land:function(x,y,i){
+    var I=isles();
+    for(var k=0;k<I.length;k++){var dx=x-I[k].x,dy=y-I[k].y,f=isleF2(Math.atan2(dy,dx),I[k].p),rx=I[k].rx*f-i,ry=I[k].ry*f-i;
+      if(rx>0&&ry>0&&dx*dx/(rx*rx)+dy*dy/(ry*ry)<1)return true;}
+    return false;},
+  docks:function(){
+    var I=isles(), a=I[0], b=I[1], P=Math.PI;
+    function at(q,ang,col){var f=isleF2(ang,q.p),c=Math.cos(ang),s=Math.sin(ang);
+      return {x:q.x+c*(q.rx*f+46)*(Math.abs(c)>0.5?1:0)+0, y:q.y+s*(q.ry*f+46)*(Math.abs(s)>0.5?1:0), h:ang+P, col:col, wh:0};}
+    return[at(a,P,0),at(a,0,1),at(a,P/2,2),at(b,P,2),at(b,0,0),at(b,-P/2,1)];},
+  spawns:function(){return[{e:'L',a:70,b:H-60},{e:'R',a:70,b:H-60},{e:'T',a:230,b:W-150},{e:'B',a:60,b:W-60}];},
+  outline:function(g,o,wob){
+    var I=isles(), a, k; g.beginPath();
+    for(k=0;k<I.length;k++){
+      for(a=0;a<6.3;a+=0.06){var f=isleF2(a,I[k].p),w=wob?3*Math.sin(a*7+o):0,px=I[k].x+Math.cos(a)*(I[k].rx*f+o+w),py=I[k].y+Math.sin(a)*(I[k].ry*f+o+w);if(a===0)g.moveTo(px,py);else g.lineTo(px,py);}
+      g.closePath();}
+  },
+  extras:function(g,R){
+    var I=isles(), k, n;
+    for(k=0;k<I.length;k++)for(n=0;n<22;n++){
+      var a=R()*6.283, c=Math.cos(a), sn=Math.sin(a);
+      if(Math.abs(c)>0.8||(k===0?sn>0.8:sn<-0.8))continue;       // keep the dock approaches clear
+      var f=isleF2(a,I[k].p)*(0.9+R()*0.1), rx=I[k].x+c*I[k].rx*f, ry=I[k].y+sn*I[k].ry*f, rs=4+R()*5;
+      g.fillStyle='rgba(30,40,45,.3)'; g.beginPath(); g.ellipse(rx+2,ry+2,rs*1.2,rs,R()*3,0,7); g.fill();
+      g.fillStyle=['#8d9196','#a3a7ab','#777c82'][(R()*3)|0]; g.beginPath(); g.ellipse(rx,ry,rs*1.2,rs,R()*3,0,7); g.fill();}
+    beacon(g,I[0].x,I[0].y-8); beacon(g,I[1].x,I[1].y+8);
+  },
+  clear:function(){var I=isles();return[[I[0].x,I[0].y-8],[I[1].x,I[1].y+8]];}
+});
+function beacon(g,lx,ly){
+  g.fillStyle='rgba(255,236,150,.25)'; g.beginPath(); g.arc(lx,ly,26,0,7); g.fill();
+  g.fillStyle='rgba(30,40,45,.3)'; g.beginPath(); g.arc(lx+3,ly+4,13,0,7); g.fill();
+  g.fillStyle='#b9b4a8'; g.beginPath(); g.arc(lx,ly,13,0,7); g.fill();
+  g.fillStyle='#ffffff'; g.beginPath(); g.arc(lx,ly,9.5,0,7); g.fill();
+  g.strokeStyle='#d1483a'; g.lineWidth=2.6; g.beginPath(); g.arc(lx,ly,6.8,0,7); g.stroke();
+  g.fillStyle='#ffe07a'; g.beginPath(); g.arc(lx,ly,3.4,0,7); g.fill();
+}
+
 /* ---------- layout ---------- */
 function buildMap(){
+  if(mapIdx>=MAPS.length)mapIdx=0;
   map=MAPS[mapIdx];
   berths=map.docks();
   for(var i=0;i<berths.length;i++)berths[i].occupant=null;
@@ -191,7 +286,8 @@ function paintBackground(){
   for(i=0;i<330;i++){
     x=R()*W; y=R()*H; var tr=6+R()*6;
     if(!map.land(x,y,26))continue;
-    var skip=(y<64&&(x<215||x>W-125))||(mapIdx===1&&Math.hypot(x-isle().x,y-isle().y)<26);
+    var skip=(y<64&&(x<215||x>W-125))||(mapIdx===1&&Math.hypot(x-isle().x,y-isle().y)<26), cl=map.clear?map.clear():[];
+    for(k=0;k<cl.length;k++)if(Math.hypot(x-cl[k][0],y-cl[k][1])<26)skip=true;
     for(k=0;k<berths.length;k++){var tb=berths[k],cx=Math.cos(tb.h),cy=Math.sin(tb.h);
       if(Math.hypot(x-tb.x-cx*60,y-tb.y-cy*60)<40||(tb.wh&&Math.hypot(x-tb.x-cx*(46+tb.wh),y-tb.y-cy*(46+tb.wh))<44))skip=true;}
     if(skip)continue;
@@ -783,10 +879,10 @@ function render(){
     uiText('One collision and the harbour closes',lx+34,ly+gap*3,19,'#1d3b4a','left','500');
     chips=[];
     for(var mi=0;mi<MAPS.length;mi++){
-      var cw=170, chx=cx+(mi-(MAPS.length-1)/2)*(cw+14)-cw/2, chy=y+318, on=mi===mapIdx;
+      var cw=Math.min(170,Math.floor((Math.min(640,W-60)-36-(MAPS.length-1)*8)/MAPS.length)), chx=cx+(mi-(MAPS.length-1)/2)*(cw+8)-cw/2, chy=y+318, on=mi===mapIdx;
       ctx.fillStyle=on?'#1d3b4a':'#efe6cd'; rr(ctx,chx,chy,cw,38,19); ctx.fill();
       ctx.strokeStyle=on?'#1d3b4a':'#c9b383'; ctx.lineWidth=2; ctx.stroke();
-      uiText(MAPS[mi].name,chx+cw/2,chy+19,16,on?'#fffaf0':'#6b5a3c','center','600');
+      uiText(MAPS[mi].name,chx+cw/2,chy+19,cw<150?13:16,on?'#fffaf0':'#6b5a3c','center','600');
       chips.push({x:chx,y:chy-4,w:cw,h:46,act:'map',map:mi});
     }
     button('Set sail',cx-122,y+402); chips.push({x:cx-232,y:y+371,w:220,h:60,act:'solo'});
@@ -867,7 +963,7 @@ function frame(t){
 resize();
 // an invite link ends in #CODE: go straight to joining that game
 (function(){var h=(location.hash||'').replace('#','').toUpperCase();if(/^[A-Z]{4}$/.test(h)){try{history.replaceState(null,'',location.pathname+location.search);}catch(e){}enterLobby();joinGame(h);}})();
-window.__hm={get mp(){return mp;},get pend(){return pend;},enterLobby:enterLobby,hostGame:hostGame,joinGame:joinGame,get chips(){return chips;},get boats(){return boats;},get berths(){return berths;},get state(){return state;},get score(){return score;},get away(){return away;},get W(){return W;},update:update,spawn:spawn,newGame:newGame,setMap:setMap,isLand:function(x,y){return isLand(x,y);},
+window.__hm={get mp(){return mp;},get pend(){return pend;},enterLobby:enterLobby,hostGame:hostGame,joinGame:joinGame,get chips(){return chips;},get boats(){return boats;},get berths(){return berths;},get state(){return state;},get score(){return score;},get away(){return away;},get W(){return W;},get H(){return H;},update:update,spawn:spawn,newGame:newGame,setMap:setMap,isLand:function(x,y){return isLand(x,y);},
   set time(v){time=v;}};
 requestAnimationFrame(frame);
 })();
