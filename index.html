@@ -58,7 +58,7 @@ function isle(){return {x:0.47*W,y:Math.round(H*0.53),rx:70,ry:52};}
 function isLand(x,y){return map.land(x,y,0);}
 
 /* ---------- maps ---------- */
-MAPS.push({name:'Twin Quays',send:'T',recv:'B',
+MAPS.push({name:'Twin Quays',pace:0.82,send:'T',recv:'B',
   land:function(x,y,i){return x<shoreL(y)-i||x>W-shoreR(y)+i;},
   docks:function(){
     var o=[],D=[[-1,0.25,0],[-1,0.5,1],[-1,0.75,2],[1,0.25,2],[1,0.5,0],[1,0.75,1]];
@@ -130,7 +130,7 @@ MAPS.push({name:'Lighthouse Isle',send:'R',recv:'L',
 function bump(x,c,w){var d=(x-c)/w;return Math.exp(-d*d);}
 function nTop(x){return 80+45*bump(x,0.35*W,0.11*W)+4*Math.sin(x/37);}
 function nBot(x){return H-80-45*bump(x,0.65*W,0.11*W)+4*Math.sin(x/41+1);}
-MAPS.push({name:'The Narrows',send:'R',recv:'L',
+MAPS.push({name:'The Narrows',pace:1.6,send:'R',recv:'L',
   land:function(x,y,i){return y<nTop(x)-i||y>nBot(x)+i;},
   docks:function(){
     var T=[[0.35,0],[0.58,1],[0.8,2]], B=[[0.18,1],[0.42,2],[0.88,0]], o=[], k, x;
@@ -157,7 +157,7 @@ MAPS.push({name:'The Narrows',send:'R',recv:'L',
 
 /* --- Crescent Bay: one sheltered bay, every ship comes and goes through the mouth at the bottom --- */
 function bay(){return {x:W/2,y:H+20,rx:W/2-70,ry:H-70};}
-MAPS.push({name:'Crescent Bay',send:'B',recv:'B',
+MAPS.push({name:'Crescent Bay',pace:1.3,send:'B',recv:'B',
   land:function(x,y,i){var b=bay(),dx=(x-b.x)/(b.rx-i),dy=(y-b.y)/(b.ry-i);return dx*dx+dy*dy>1;},
   docks:function(){
     var b=bay(), A=[[-160,0],[-128,1],[-101,2],[-79,0],[-52,1],[-20,2]], o=[], k;
@@ -181,7 +181,7 @@ MAPS.push({name:'Crescent Bay',send:'B',recv:'B',
 /* --- Twin Isles: open sea, two islands, traffic from every side --- */
 function isles(){return[{x:0.27*W,y:Math.round(0.42*H),rx:72,ry:54,p:0.5},{x:0.72*W,y:Math.round(0.6*H),rx:72,ry:54,p:2.1}];}
 function isleF2(a,p){return 1+0.06*Math.sin(3*a+p)+0.04*Math.sin(5*a+p*2);}
-MAPS.push({name:'Twin Isles',send:'R',recv:'L',
+MAPS.push({name:'Twin Isles',pace:1.45,send:'R',recv:'L',
   land:function(x,y,i){
     var I=isles();
     for(var k=0;k<I.length;k++){var dx=x-I[k].x,dy=y-I[k].y,f=isleF2(Math.atan2(dy,dx),I[k].p),rx=I[k].rx*f-i,ry=I[k].ry*f-i;
@@ -398,8 +398,9 @@ function newGame(){
   state='play';
 }
 function randCargo(ti){
-  var pool=time<45?2:3, first=(Math.random()*pool)|0, cargo=[];
-  for(var k=0;k<TYPES[ti].cap;k++)cargo.push(k===0||Math.random()<0.6?first:(Math.random()*pool)|0);
+  // single-colour loads to begin with; mixed loads only once the game is well under way
+  var pool=time<45?2:3, first=(Math.random()*pool)|0, cargo=[], mix=time>100?0.35:0;
+  for(var k=0;k<TYPES[ti].cap;k++)cargo.push(k===0||Math.random()>=mix?first:(Math.random()*pool)|0);
   return cargo;
 }
 function makeBoat(p){
@@ -426,7 +427,7 @@ function spawn(){
     for(var i=0;i<boats.length;i++){var o=boats[i];if(Math.hypot(o.x-x,o.y-y)<170)ok=false;}
     for(i=0;i<pend.length;i++)if(Math.hypot(pend[i].x-x,pend[i].y-y)<170)ok=false;
     if(!ok)continue;
-    var r=Math.random(), ti=r<0.45?0:(r<0.8||time<30?1:2);
+    var r=Math.random(), ti=time<60?(r<0.55?0:1):(r<0.45?0:r<0.8?1:2);
     pend.push({x:x,y:y,h:h,type:ti,cargo:randCargo(ti),t:1.6,opp:false});
     return;
   }
@@ -440,7 +441,8 @@ function crash(a,b){
 }
 function undock(b){
   if(b.state!=='docked')return;
-  berths[b.berthIdx].occupant=null; b.berthIdx=-1; b.state='sail'; b.grace=2.2; b.unloadT=0;
+  var be=berths[b.berthIdx]; b.leaving={x:be.x,y:be.y};   // land is ignored only right beside the dock being left
+  be.occupant=null; b.berthIdx=-1; b.state='sail'; b.grace=0; b.unloadT=0;
 }
 function updateBoat(b,dt){
   b.hold=false;
@@ -470,17 +472,20 @@ function updateBoat(b,dt){
   }
   if(step>0&&!b.hold){nx+=Math.cos(b.h)*step;ny+=Math.sin(b.h)*step;}
   var finalApproach=b.targetIdx>=0&&b.path.length<=1;
-  if(!finalApproach&&b.grace<=0&&!b.entering&&isLand(nx,ny)){
-    // ran aground: turn back out to sea
+  if(b.leaving&&Math.hypot(nx-b.leaving.x,ny-b.leaving.y)>52)b.leaving=null;
+  if(!finalApproach&&!b.leaving&&!b.entering&&isLand(nx,ny)){
+    // ran aground: drop the course and steer for the nearest open water.
+    // On first contact prefer turning back the way it came; after that keep to the chosen heading, so it never dithers.
     b.path=[];b.targetIdx=-1;
-    var bestA=null,bestD=99,back=b.h+Math.PI;
-    for(var q=0;q<16;q++){var a=q*Math.PI/8;
-      if(map.land(b.x+Math.cos(a)*36,b.y+Math.sin(a)*36,-6))continue;
-      var df=Math.abs(Math.atan2(Math.sin(a-back),Math.cos(a-back)))+Math.random()*0.2;
+    var bestA=null,bestD=99,ref=b.esc?b.h:b.h+Math.PI,RR=[36,70,110,170,250,340];
+    for(var ri=0;ri<RR.length&&bestA===null;ri++)for(var q=0;q<16;q++){var a=q*Math.PI/8,tx=b.x+Math.cos(a)*RR[ri],ty=b.y+Math.sin(a)*RR[ri];
+      if(tx<0||tx>W||ty<0||ty>H||map.land(tx,ty,-6))continue;
+      var df=Math.abs(Math.atan2(Math.sin(a-ref),Math.cos(a-ref)));
       if(df<bestD){bestD=df;bestA=a;}}
-    if(bestA===null)bestA=back;
-    b.h=bestA;nx=b.x+Math.cos(bestA)*1.5;ny=b.y+Math.sin(bestA)*1.5;
-  }
+    if(bestA===null)bestA=Math.atan2(H/2-b.y,W/2-b.x);
+    var mv=isLand(b.x,b.y)?Math.max(1.5,b.speed*dt):1.5;      // already on land (rare): move out at full speed
+    b.h=bestA;b.esc=true;nx=b.x+Math.cos(bestA)*mv;ny=b.y+Math.sin(bestA)*mv;
+  }else b.esc=false;
   b.x=nx;b.y=ny;
   if(b.entering){if(b.x>14&&b.x<W-14&&b.y>14&&b.y<H-14)b.entering=false;}
   else{
@@ -508,7 +513,7 @@ function update(dt){
   if(state==='crash'){overT+=dt;if(overT>1.4)state='over';return;}
   if(state!=='play'||paused)return;
   time+=dt; spawnT-=dt;
-  if(spawnT<=0){spawn();spawnT=Math.max(2.5,7-time*0.02)*(0.8+Math.random()*0.4)*(mp.st==='play'?1.7:1);}
+  if(spawnT<=0){spawn();spawnT=Math.max(3.3,8.8-time*0.016)*(map.pace||1)*(0.8+Math.random()*0.4)*(mp.st==='play'?1.7:1);}
   for(i=pend.length-1;i>=0;i--){pend[i].t-=dt;if(pend[i].t<=0){boats.push(makeBoat(pend[i]));pend.splice(i,1);}}
   for(i=0;i<boats.length;i++)updateBoat(boats[i],dt);
   for(i=boats.length-1;i>=0;i--)if(boats[i].gone){for(var k in draws)if(draws[k]===boats[i])delete draws[k];boats.splice(i,1);}
@@ -777,8 +782,8 @@ function drawBoat(b){
     var col=berths[b.berthIdx].col;
     if(b.cargo.indexOf(col)>=0){
       ctx.strokeStyle='rgba(255,255,255,.9)';ctx.lineWidth=3;ctx.beginPath();ctx.arc(b.x-Math.cos(b.h)*(b.r*1.35+18),b.y-Math.sin(b.h)*(b.r*1.35+18),7,-Math.PI/2,-Math.PI/2+Math.PI*2*(b.unloadT/1.3));ctx.stroke();
-    }else if(cargoCount(b)===0){
-      var a=0.5+0.5*Math.sin(clock*5); ctx.strokeStyle='rgba(255,255,255,'+(0.35+0.45*a).toFixed(2)+')'; ctx.lineWidth=2;
+    }else{
+      var a=0.5+0.5*Math.sin(clock*5); ctx.strokeStyle='rgba(255,255,255,'+(0.35+0.45*a).toFixed(2)+')'; ctx.lineWidth=cargoCount(b)?3:2;
       ctx.beginPath(); ctx.arc(b.x,b.y,b.r*1.55+3*a,0,7); ctx.stroke();
     }
   }
@@ -963,7 +968,7 @@ function frame(t){
 resize();
 // an invite link ends in #CODE: go straight to joining that game
 (function(){var h=(location.hash||'').replace('#','').toUpperCase();if(/^[A-Z]{4}$/.test(h)){try{history.replaceState(null,'',location.pathname+location.search);}catch(e){}enterLobby();joinGame(h);}})();
-window.__hm={get mp(){return mp;},get pend(){return pend;},enterLobby:enterLobby,hostGame:hostGame,joinGame:joinGame,get chips(){return chips;},get boats(){return boats;},get berths(){return berths;},get state(){return state;},get score(){return score;},get away(){return away;},get W(){return W;},get H(){return H;},update:update,spawn:spawn,newGame:newGame,setMap:setMap,isLand:function(x,y){return isLand(x,y);},
+window.__hm={get mp(){return mp;},get pend(){return pend;},enterLobby:enterLobby,hostGame:hostGame,joinGame:joinGame,get chips(){return chips;},get boats(){return boats;},get berths(){return berths;},get state(){return state;},get score(){return score;},get away(){return away;},get W(){return W;},get H(){return H;},update:update,spawn:spawn,undock:undock,newGame:newGame,setMap:setMap,isLand:function(x,y){return isLand(x,y);},
   set time(v){time=v;}};
 requestAnimationFrame(frame);
 })();
