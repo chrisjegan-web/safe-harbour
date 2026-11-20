@@ -397,7 +397,7 @@ function updateBoat(b,dt){
       else if(b.y>H-8){b.y=H-8;b.h=Math.atan2(-Math.abs(Math.sin(b.h))-0.15,Math.cos(b.h));hit=true;}
       if(hit){b.path=[];b.targetIdx=-1;}
     }else if(b.x<-30||b.x>W+30||b.y<-30||b.y>H+30){b.gone=true;away++;sfx('away');
-      if(mp.st==='play'){var ex=b.x>W+30?'R':b.x<-30?'L':b.y<-30?'T':'B';if(ex===map.send)sendShip(b,ex);}}
+      if(mp.st==='play')sendShip(b,b.x>W+30?'R':b.x<-30?'L':b.y<-30?'T':'B');}
   }
   // smooth the drawn heading
   var da=Math.atan2(Math.sin(b.h-b.dh),Math.cos(b.h-b.dh)); b.dh+=da*Math.min(1,dt*7);
@@ -514,8 +514,11 @@ function onMsg(d){
     send({k:'ack',id:d.id});
     if(mp.seen[d.id])return; mp.seen[d.id]=1;
     var ti=d.t|0; if(ti<0||ti>2)ti=0; var f=+d.f; if(!(f>=0&&f<=1))f=0.5;
-    var sg=edgeSeg(map.recv); if(!sg)return;
-    var p=edgePoint(map.recv,sg.a+f*(sg.b-sg.a)), q=0;
+    // it arrives on the opposite side to the one it left by, at the matching spot (kept to open water)
+    var oe={L:'R',R:'L',T:'B',B:'T'}[d.e], sg=oe?edgeSeg(oe):null, v;
+    if(sg)v=Math.max(sg.a,Math.min(sg.b,f*((oe==='L'||oe==='R')?H:W)));
+    else{oe=map.recv;sg=edgeSeg(oe);if(!sg)return;v=sg.a+f*(sg.b-sg.a);}
+    var p=edgePoint(oe,v), q=0;
     for(var i=0;i<pend.length;i++)if(pend[i].opp)q++;
     pend.push({x:p.x,y:p.y,h:p.h,type:ti,cargo:randCargo(ti),t:2.2+q*0.9,opp:true}); mp.got++; sfx('incoming');
   }
@@ -531,8 +534,9 @@ function mpTick(){
   if(clock-mp.last>12)endMP('left');
 }
 function sendShip(b,e){
-  var sg=edgeSeg(e), v=(e==='L'||e==='R')?b.y:b.x, f=sg?Math.max(0,Math.min(1,(v-sg.a)/(sg.b-sg.a))):0.5;
-  var id=mp.next++; mp.out[id]={msg:{k:'ship',id:id,t:b.type,f:Math.round(f*1000)/1000},tries:0,next:0}; mp.sent++;
+  // where along that edge the ship left, as a fraction of the screen, so it works between different phones
+  var f=Math.max(0,Math.min(1,(e==='L'||e==='R')?b.y/H:b.x/W));
+  var id=mp.next++; mp.out[id]={msg:{k:'ship',id:id,t:b.type,e:e,f:Math.round(f*1000)/1000},tries:0,next:0}; mp.sent++;
   floats.push({x:Math.max(30,Math.min(W-30,b.x)),y:Math.max(30,Math.min(H-30,b.y)),t:0,text:'Sent!',c:'#fff'});
 }
 function shareInvite(){
@@ -644,14 +648,19 @@ function drawTrail(b){
 }
 function drawPath(b){
   if(!b.path.length)return;
-  var col=b.targetIdx>=0?CARGO[berths[b.targetIdx].col].c:'#ffffff';
-  ctx.strokeStyle=col; ctx.globalAlpha=0.85; ctx.lineWidth=2.6; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.setLineDash([2,8]);
-  ctx.beginPath(); ctx.moveTo(b.x,b.y);
-  for(var i=0;i<b.path.length;i++)ctx.lineTo(b.path[i].x,b.path[i].y);
-  ctx.stroke(); ctx.setLineDash([]);
-  var l=b.path[b.path.length-1];
-  if(b.targetIdx<0){ctx.fillStyle=col;ctx.beginPath();ctx.arc(l.x,l.y,4,0,7);ctx.fill();}
-  ctx.globalAlpha=1;
+  var i, l=b.path[b.path.length-1];
+  ctx.lineCap='round'; ctx.lineJoin='round'; ctx.setLineDash([2,9]);
+  for(var pass=0;pass<2;pass++){
+    ctx.strokeStyle=pass?'#ffffff':'rgba(8,40,55,.55)'; ctx.lineWidth=pass?3:6; ctx.globalAlpha=pass?0.95:1;
+    ctx.beginPath(); ctx.moveTo(b.x,b.y);
+    for(i=0;i<b.path.length;i++)ctx.lineTo(b.path[i].x,b.path[i].y);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]); ctx.globalAlpha=1;
+  if(b.targetIdx>=0){
+    ctx.fillStyle=CARGO[berths[b.targetIdx].col].c; ctx.strokeStyle='#ffffff'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(l.x,l.y,7,0,7); ctx.fill(); ctx.stroke();
+  }else{ctx.fillStyle='#ffffff';ctx.beginPath();ctx.arc(l.x,l.y,4.5,0,7);ctx.fill();}
 }
 function drawBoat(b){
   var T=TYPES[b.type], L=b.r*2.7, w=b.r*1.2;
@@ -660,12 +669,12 @@ function drawBoat(b){
   ctx.fillStyle=T.hull; hullPath(L,w); ctx.fill(); ctx.strokeStyle=T.trim; ctx.lineWidth=1.4; ctx.stroke();
   ctx.fillStyle=T.deck; hullPath(L*0.84,w*0.68); ctx.fill();
   var cabW=L*0.16; ctx.fillStyle='#ffffff'; rr(ctx,-L/2+3,-w*0.27,cabW,w*0.54,2); ctx.fill(); ctx.strokeStyle=T.trim; ctx.lineWidth=1; ctx.stroke();
-  var n=b.cargo.length, x0=-L/2+5+cabW, span=L*0.5, s=Math.min(w*0.56,span/n-1.5);
+  var n=b.cargo.length, s=12, cols=n>2?2:n, rows=n>2?2:1, pitch=s+2, x0=-L/2+7+cabW+s/2;
   for(var i=0;i<n;i++){
-    var cx=x0+(i+0.5)*(span/n), c=b.cargo[i];
-    if(c===null){ctx.strokeStyle='rgba(0,0,0,.18)';ctx.lineWidth=1;ctx.strokeRect(cx-s/2,-s/2,s,s);}
-    else{ctx.fillStyle=CARGO[c].c;ctx.fillRect(cx-s/2,-s/2,s,s);ctx.strokeStyle=CARGO[c].d;ctx.lineWidth=1.2;ctx.strokeRect(cx-s/2,-s/2,s,s);
-      ctx.fillStyle='rgba(255,255,255,.35)';ctx.fillRect(cx-s/2+1,-s/2+1,s-2,s*0.25);}
+    var cx=x0+(n>2?(i>>1):i)*pitch, cy=rows>1?((i&1)?1:-1)*(s/2+1):0, c=b.cargo[i];
+    if(c===null){ctx.strokeStyle='rgba(0,0,0,.18)';ctx.lineWidth=1;ctx.strokeRect(cx-s/2,cy-s/2,s,s);}
+    else{ctx.fillStyle=CARGO[c].c;ctx.fillRect(cx-s/2,cy-s/2,s,s);ctx.strokeStyle=CARGO[c].d;ctx.lineWidth=1.4;ctx.strokeRect(cx-s/2,cy-s/2,s,s);
+      ctx.fillStyle='rgba(255,255,255,.35)';ctx.fillRect(cx-s/2+1,cy-s/2+1,s-2,s*0.25);}
   }
   ctx.restore();
   if(b.state==='docked'){
@@ -755,17 +764,6 @@ function render(){
       ctx.save(); ctx.translate(Math.max(20,Math.min(W-20,pe.x)),Math.max(20,Math.min(H-20,pe.y))); ctx.rotate(pe.h); ctx.scale(pu,pu);
       ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(-2,-13); ctx.lineTo(-2,-5); ctx.lineTo(-14,-5); ctx.lineTo(-14,5); ctx.lineTo(-2,5); ctx.lineTo(-2,13); ctx.closePath();
       ctx.fillStyle=pe.opp?'#ff5a3c':'#ffd23f'; ctx.fill(); ctx.strokeStyle='#1d3b4a'; ctx.lineWidth=2.5; ctx.lineJoin='round'; ctx.stroke(); ctx.restore();}
-    if(mp.st==='play'){
-      var sg=edgeSeg(map.send);
-      if(sg){var hz=map.send==='T'||map.send==='B', out=map.send==='T'?-Math.PI/2:map.send==='B'?Math.PI/2:map.send==='L'?Math.PI:0;
-        ctx.strokeStyle='#ffffff'; ctx.lineWidth=3.5; ctx.lineCap='round'; ctx.lineJoin='round';
-        for(var sv=sg.a+25;sv<sg.b-10;sv+=64){
-          var ex2=hz?sv:(map.send==='L'?13:W-13), ey2=hz?(map.send==='T'?13:H-13):sv;
-          ctx.globalAlpha=0.35+0.3*Math.sin(clock*4-sv*0.03);
-          ctx.save(); ctx.translate(ex2,ey2); ctx.rotate(out); ctx.beginPath(); ctx.moveTo(-5,-8); ctx.lineTo(4,0); ctx.lineTo(-5,8); ctx.stroke(); ctx.restore();}
-        ctx.globalAlpha=0.85; ctx.save(); ctx.translate(hz?(sg.a+sg.b)/2:(map.send==='L'?34:W-34),hz?(map.send==='T'?34:H-34):(sg.a+sg.b)/2); if(!hz)ctx.rotate(map.send==='R'?Math.PI/2:-Math.PI/2);
-        uiText('SEND TO OPPONENT',0,0,13,'#ffffff','center','700'); ctx.restore(); ctx.globalAlpha=1;}
-    }
     drawHUD();
     if(paused){ctx.fillStyle='rgba(10,45,60,.5)';ctx.fillRect(0,0,W,H);text('Paused',W/2,H/2-10,54,'#fffaf0','center');uiText('Tap to carry on',W/2,H/2+38,20,'#fffaf0','center','500');}
   }
