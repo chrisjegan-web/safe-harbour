@@ -38,6 +38,7 @@ var state='menu', paused=false, score=0, away=0, best=0, time=0, spawnT=1, overT
 var pend=[];             // ships about to arrive: an arrow shows at the edge first
 var mpT=0, lastHonk=0;
 var mp={st:'idle',role:'',code:'',entry:'',err:'',peer:null,conn:null,out:{},seen:{},next:1,result:null,gone:false,sent:0,got:0,last:0,pingT:0,myAgain:false,theirAgain:false};
+var review=false, viewOpp=false;   // after a game: stats panel closed, looking at the harbours
 var draws={};            // pointerId -> boat being steered
 var soundOn=true;
 try{best=parseInt(localStorage.getItem('safeharbour.best')||'0',10)||0;}catch(e){}
@@ -393,6 +394,7 @@ function setSound(on){soundOn=on;if(master)master.gain.value=on?1:0;try{localSto
 
 /* ---------- game ---------- */
 function newGame(){
+  review=false; viewOpp=false; mp.snap=null;
   boats=[];floats=[];blasts=[];pend=[];draws={};score=0;away=0;time=0;spawnT=1;paused=false;
   for(var i=0;i<berths.length;i++)berths[i].occupant=null;
   state='play';
@@ -436,7 +438,7 @@ function crash(a,b){
   var x=(a.x+b.x)/2, y=(a.y+b.y)/2;
   blasts.push({x:x,y:y,t:0}); sfx('crash');
   state='crash'; overT=0; draws={};
-  if(mp.st==='play'){mp.result='lose';mp.st='done';send({k:'lost'});}
+  if(mp.st==='play'){mp.result='lose';mp.st='done';send({k:'lost'});sendSnap();}
   if(score>best){best=score;try{localStorage.setItem('safeharbour.best',String(best));}catch(e){}}
 }
 function undock(b){
@@ -593,6 +595,25 @@ function oppGone(){
   else if(mp.st==='done'||mp.st==='rewait'){mp.gone=true;if(mp.st==='rewait'){state='over';mp.st='done';if(!mp.result)mp.result='left';}}
   else if(mp.st==='connecting'){mp.err='The connection was lost.';mp.st='join';mp.entry='';netClose();}
 }
+function sendSnap(){
+  var bs=[]; for(var i=0;i<boats.length;i++){var b=boats[i];bs.push({x:Math.round(b.x),y:Math.round(b.y),h:Math.round(b.dh*100)/100,t:b.type,c:b.cargo,d:b.state==='docked'?b.berthIdx:-1,w:b.warn?1:0});}
+  send({k:'snap',W:Math.round(W),H:H,map:mapIdx,score:score,boats:bs,blast:blasts.length?{x:Math.round(blasts[0].x),y:Math.round(blasts[0].y)}:null});
+}
+function takeSnap(d){
+  // rebuild the other player's harbour exactly as their phone drew it (their screen may be a different shape)
+  if(!d||!(d.W>=400&&d.W<=2000)||!(d.H>=300&&d.H<=900)||!MAPS[d.map|0]||!d.boats||d.boats.length>40)return;
+  var sW=W,sH=H,sB=berths,sBg=bg,sMap=map,sIdx=mapIdx, sn={W:d.W,H:d.H,score:d.score|0,boats:[],blast:null,bg:null};
+  try{
+    W=d.W;H=d.H;mapIdx=d.map|0;map=MAPS[mapIdx];berths=map.docks();paintBackground();sn.bg=bg;sn.cols=berths.map(function(x){return x.col;});
+  }catch(e){sn=null;}
+  W=sW;H=sH;berths=sB;bg=sBg;map=sMap;mapIdx=sIdx;
+  if(!sn)return;
+  for(var i=0;i<d.boats.length;i++){var o=d.boats[i],ti=o.t|0;if(ti<0||ti>2||!o.c||o.c.length>4)continue;
+    sn.boats.push({x:+o.x||0,y:+o.y||0,h:+o.h||0,dh:+o.h||0,type:ti,r:TYPES[ti].r,cargo:o.c.map(function(c){return c===null||c===undefined?null:Math.max(0,Math.min(2,c|0));}),
+      state:'sail',docked:o.d>=0,warn:false,path:[],trail:[],targetIdx:-1,berthIdx:-1,unloadT:0});}
+  if(d.blast)sn.blast={x:+d.blast.x||0,y:+d.blast.y||0};
+  mp.snap=sn;
+}
 function startMP(mi){
   if(mi!==mapIdx&&MAPS[mi])setMap(mi);
   mp.out={}; mp.seen={}; mp.sent=0; mp.got=0; mp.result=null; mp.gone=false; mp.myAgain=mp.theirAgain=false; mp.last=clock; mp.pingT=0;
@@ -600,7 +621,7 @@ function startMP(mi){
 }
 function endMP(res){
   if(mp.st!=='play')return;
-  mp.result=res; mp.st='done'; if(res==='left')mp.gone=true;
+  mp.result=res; mp.st='done'; if(res==='left')mp.gone=true; else sendSnap();
   state='over'; draws={}; sfx('dock');
 }
 function askRematch(){
@@ -625,6 +646,7 @@ function onMsg(d){
   }
   else if(d.k==='ack'){delete mp.out[d.id];}
   else if(d.k==='lost'){endMP('win');}
+  else if(d.k==='snap'){takeSnap(d);}
   else if(d.k==='again'){mp.theirAgain=true;tryRematch();}
   else if(d.k==='bye'){oppGone();}
 }
@@ -713,8 +735,11 @@ function up(e){
         else if(ch.act==='key'){if(mp.entry.length<4){mp.entry+=ch.ch;mp.err='';sfx('snap');if(mp.entry.length===4)joinGame(mp.entry);}}
         else if(ch.act==='back'){mp.entry=mp.entry.slice(0,-1);mp.err='';}
         else if(ch.act==='share'){shareInvite();}
-        else if(ch.act==='again'){if(mp.result)askRematch();else newGame();}
-        else{mpLeave();state='menu';boats=[];pend=[];}
+        else if(ch.act==='again'){review=false;if(mp.result)askRematch();else newGame();}
+        else if(ch.act==='close'){review=true;viewOpp=!!(mp.snap&&mp.result==='win');}
+        else if(ch.act==='stats'){review=false;}
+        else if(ch.act==='view'){viewOpp=!viewOpp;}
+        else{review=false;mpLeave();state='menu';boats=[];pend=[];}
         return;}}
     return;
   }
@@ -792,6 +817,11 @@ function drawBoat(b){
     ctx.beginPath(); ctx.arc(b.x,b.y,b.r*1.7,0,7); ctx.stroke();
   }
 }
+function crashMark(x,y){
+  var a=0.5+0.5*Math.sin(clock*6);
+  ctx.strokeStyle='rgba(255,60,40,'+(0.65+0.3*a).toFixed(2)+')'; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(x,y,34+5*a,0,7); ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,.85)'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(x,y,40+5*a,0,7); ctx.stroke();
+}
 function text(t,x,y,size,col,align,font){
   ctx.font=(font||'600')+' '+size+'px '+(font==='title'?'':'')+'Georgia,"Palatino Linotype",Palatino,serif';
   ctx.textAlign=align||'left'; ctx.textBaseline='middle'; ctx.fillStyle=col; ctx.fillText(t,x,y);
@@ -838,8 +868,17 @@ function render(){
   ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#0f4c5c'; ctx.fillRect(0,0,cv.width,cv.height);
   applyT();
   ctx.save(); ctx.beginPath(); ctx.rect(0,0,W,H); ctx.clip();
+  var i, showOpp=state==='over'&&review&&viewOpp&&mp.snap;
+  if(showOpp){
+    var sn=mp.snap, sk=Math.min(W/sn.W,H/sn.H);
+    ctx.fillStyle='#0b3947'; ctx.fillRect(0,0,W,H);
+    ctx.save(); ctx.translate((W-sn.W*sk)/2,(H-sn.H*sk)/2); ctx.scale(sk,sk); ctx.beginPath(); ctx.rect(0,0,sn.W,sn.H); ctx.clip();
+    if(sn.bg)ctx.drawImage(sn.bg,0,0,sn.W,sn.H);
+    for(i=0;i<sn.boats.length;i++)drawBoat(sn.boats[i]);
+    if(sn.blast)crashMark(sn.blast.x,sn.blast.y);
+    ctx.restore();
+  }else{
   if(bg)ctx.drawImage(bg,0,0,W,H);
-  var i;
   // drifting light on the water
   var R=rng(21);
   ctx.strokeStyle='#ffffff'; ctx.lineWidth=1.6; ctx.lineCap='round';
@@ -859,6 +898,8 @@ function render(){
       ctx.fillStyle='#ffd166';ctx.beginPath();ctx.arc(bl.x,bl.y,14+t*50,0,7);ctx.fill();
       ctx.strokeStyle='#ffffff';ctx.lineWidth=5;ctx.beginPath();ctx.arc(bl.x,bl.y,20+t*95,0,7);ctx.stroke();
       ctx.fillStyle='#e4572e';ctx.beginPath();ctx.arc(bl.x,bl.y,8+t*26,0,7);ctx.fill();ctx.globalAlpha=1;}
+  }
+  if(state==='over'&&blasts.length)crashMark(blasts[0].x,blasts[0].y);
   }
   if(state==='play'||state==='crash'){
     for(i=0;i<pend.length;i++){var pe=pend[i], pu=1+0.18*Math.sin(clock*11);
@@ -896,7 +937,21 @@ function render(){
     else if(best>0)uiText('Best so far: '+best,cx,y+446,15,'#8a7a5c','center','600');
     ctx.restore(); fitChips(km);
   }
-  if(state==='over'){
+  if(state==='over'&&review){
+    // stats closed: the harbour is clear to look at, with small controls tucked in the bottom-left corner
+    chips=[];
+    var two2=!!mp.result, bx=12, by=H-46;
+    function pill(label,w,act,strong){ctx.globalAlpha=0.94;ctx.fillStyle=strong?'#e4572e':'#fbf5e3';rr(ctx,bx,by,w,34,17);ctx.fill();ctx.strokeStyle=strong?'#a83a1b':'#c9b383';ctx.lineWidth=1.5;ctx.stroke();ctx.globalAlpha=1;
+      uiText(label,bx+w/2,by+17.5,14,strong?'#fffaf0':'#1d3b4a','center','700');chips.push({x:bx-3,y:by-6,w:w+6,h:46,act:act});bx+=w+8;}
+    pill(two2?(mp.gone?'New game':'Rematch'):'Play again',two2&&!mp.gone?88:96,'again',true);
+    pill('Menu',64,'menu');
+    pill('Scores',70,'stats');
+    if(mp.snap)pill(viewOpp?'See my harbour':'See their harbour',viewOpp?128:136,'view');
+    var lab=two2?(showOpp?'Their harbour':'Your harbour')+(mp.result&&((showOpp&&mp.result==='win')||(!showOpp&&mp.result==='lose'))?' \u2013 the collision':''):'';
+    if(mp.theirAgain&&!mp.gone)lab='The other player wants a rematch!';
+    if(lab){ctx.font='700 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';var lw=ctx.measureText(lab).width+28;ctx.globalAlpha=0.92;ctx.fillStyle='#1d3b4a';rr(ctx,W/2-lw/2,10,lw,30,15);ctx.fill();ctx.globalAlpha=1;uiText(lab,W/2,25.5,14,'#fffaf0','center','700');}
+  }
+  if(state==='over'&&!review){
     var ko=Math.min(1,(H-20)/380); ctx.save(); ctx.translate(W/2,H/2); ctx.scale(ko,ko); ctx.translate(-W/2,-H/2);
     var q=panel(Math.min(520,W-60),380), c2=W/2, two=!!mp.result;
     var head=mp.result==='win'?'You win!':mp.result==='left'?'Opponent left':'Collision!';
@@ -908,7 +963,11 @@ function render(){
     button(two?(mp.gone?'New game':'Rematch'):'Play again',c2,q.y+272);
     ctx.fillStyle='#efe6cd'; rr(ctx,c2-75,q.y+318,150,36,18); ctx.fill(); ctx.strokeStyle='#c9b383'; ctx.lineWidth=2; ctx.stroke();
     uiText('Menu',c2,q.y+336,15,'#6b5a3c','center','600');
-    chips=[{x:c2-110,y:q.y+241,w:220,h:60,act:'again'},{x:c2-75,y:q.y+314,w:150,h:44,act:'menu'}];
+    // a cross to put the scores away and look at the harbours
+    var pw2=Math.min(520,W-60), xx=q.x+pw2-34, xy=q.y+34;
+    ctx.fillStyle='#efe6cd'; ctx.beginPath(); ctx.arc(xx,xy,19,0,7); ctx.fill(); ctx.strokeStyle='#c9b383'; ctx.lineWidth=2; ctx.stroke();
+    ctx.strokeStyle='#6b5a3c'; ctx.lineWidth=3; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(xx-7,xy-7); ctx.lineTo(xx+7,xy+7); ctx.moveTo(xx+7,xy-7); ctx.lineTo(xx-7,xy+7); ctx.stroke();
+    chips=[{x:c2-110,y:q.y+241,w:220,h:60,act:'again'},{x:c2-75,y:q.y+314,w:150,h:44,act:'menu'},{x:xx-26,y:xy-26,w:52,h:52,act:'close'}];
     ctx.restore(); fitChips(ko);
   }
   if(state==='lobby'){
@@ -968,7 +1027,7 @@ function frame(t){
 resize();
 // an invite link ends in #CODE: go straight to joining that game
 (function(){var h=(location.hash||'').replace('#','').toUpperCase();if(/^[A-Z]{4}$/.test(h)){try{history.replaceState(null,'',location.pathname+location.search);}catch(e){}enterLobby();joinGame(h);}})();
-window.__hm={get mp(){return mp;},get pend(){return pend;},enterLobby:enterLobby,hostGame:hostGame,joinGame:joinGame,get chips(){return chips;},get boats(){return boats;},get berths(){return berths;},get state(){return state;},get score(){return score;},get away(){return away;},get W(){return W;},get H(){return H;},update:update,spawn:spawn,undock:undock,newGame:newGame,setMap:setMap,isLand:function(x,y){return isLand(x,y);},
+window.__hm={get mp(){return mp;},get pend(){return pend;},enterLobby:enterLobby,hostGame:hostGame,joinGame:joinGame,get chips(){return chips;},get review(){return [review,viewOpp];},get blasts(){return blasts;},get boats(){return boats;},get berths(){return berths;},get state(){return state;},get score(){return score;},get away(){return away;},get W(){return W;},get H(){return H;},update:update,spawn:spawn,undock:undock,newGame:newGame,setMap:setMap,isLand:function(x,y){return isLand(x,y);},
   set time(v){time=v;}};
 requestAnimationFrame(frame);
 })();
