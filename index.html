@@ -39,12 +39,27 @@ var state='menu', paused=false, score=0, away=0, best=0, time=0, spawnT=1, overT
 var pend=[];             // ships about to arrive: an arrow shows at the edge first
 var mpT=0, lastHonk=0;
 var mp={st:'idle',role:'',code:'',entry:'',err:'',peer:null,conn:null,out:{},seen:{},next:1,result:null,gone:false,sent:0,got:0,last:0,pingT:0,myAgain:false,theirAgain:false};
+// Difficulty.  pace: arrival gap multiplier; min: shortest gap (s); big/mix/col3: when large ships, mixed loads and the
+// third colour start (s); hazFirst/hazGap: hazard timing; drift: speed of a ship with no course (x normal);
+// safe: docked ships can't be hit; warn: how long the arrival arrow shows; smallOnly: small boats only until then
+var DIFF=[
+ {name:'Easy',  pace:1.25,min:4.0,big:90,mix:1e9,mixP:0,   col3:1e9,hazFirst:95,hazGap:45,drift:0.5, safe:true, warn:2.6,smallOnly:40},
+ {name:'Medium',pace:1.0, min:3.3,big:60,mix:100,mixP:0.35,col3:45, hazFirst:40,hazGap:28,drift:0.65,safe:false,warn:2.0,smallOnly:0},
+ {name:'Hard',  pace:0.8, min:2.8,big:30,mix:45, mixP:0.45,col3:0,  hazFirst:25,hazGap:20,drift:1,   safe:false,warn:1.6,smallOnly:0}
+], diff=1, D=DIFF[1];
+var dk=0, nightT=0, banner=null;      // dk: how dark it is right now (0 day .. 1 night); nightT: seconds left of a night sent by the opponent
 var hazards=[], hazT=45;            // whirlpools and waterspouts
 var review=false, viewOpp=false;   // after a game: stats panel closed, looking at the harbours
 var draws={};            // pointerId -> boat being steered
 var opts={music:true,amb:true,all:true};   // sound settings
 var night=false, settings=false, schips=[], dark=null;
-try{best=parseInt(localStorage.getItem('safeharbour.best')||'0',10)||0;}catch(e){}
+function loadBest(){
+  best=0;
+  try{best=parseInt(localStorage.getItem('safeharbour.best.'+diff)||(diff===1?localStorage.getItem('safeharbour.best'):'0')||'0',10)||0;}catch(e){}
+}
+function setDiff(i){diff=Math.max(0,Math.min(2,i|0));D=DIFF[diff];loadBest();try{localStorage.setItem('safeharbour.diff',String(diff));}catch(e){}}
+try{var dv=localStorage.getItem('safeharbour.diff');if(dv!==null){diff=Math.max(0,Math.min(2,parseInt(dv,10)||0));D=DIFF[diff];}}catch(e){}
+loadBest();
 try{opts.all=localStorage.getItem('safeharbour.sound')!=='off';opts.music=localStorage.getItem('safeharbour.music')!=='off';opts.amb=localStorage.getItem('safeharbour.amb')!=='off';night=localStorage.getItem('safeharbour.night')==='on';}catch(e){}
 try{var mi=localStorage.getItem('safeharbour.map');if(mi!==null)mapIdx=Math.max(0,parseInt(mi,10)||0);}catch(e){}
 
@@ -221,6 +236,32 @@ MAPS.push({name:'Twin Isles',pace:1.45,send:'R',recv:'L',
   },
   clear:function(){var I=isles();return[[I[0].x,I[0].y-8],[I[1].x,I[1].y+8]];},
   lights:function(){var I=isles();return[[I[0].x,I[0].y-8],[I[1].x,I[1].y+8]];}
+});
+/* --- Lone Isle: a single island in the middle of open sea, docks all the way round --- */
+function lone(){return {x:W/2,y:Math.round(H/2)+6,rx:108,ry:50};}
+function loneF(a){return 1+0.03*Math.sin(4*a+0.7);}
+MAPS.push({name:'Lone Isle',pace:1.25,send:'R',recv:'L',
+  land:function(x,y,i){var I=lone(),dx=x-I.x,dy=y-I.y,f=loneF(Math.atan2(dy,dx)),rx=I.rx*f-i,ry=I.ry*f-i;
+    return rx>0&&ry>0&&dx*dx/(rx*rx)+dy*dy/(ry*ry)<1;},
+  docks:function(){
+    var I=lone(), P=Math.PI, o=[];
+    function edge(dx,sgn){   // where the shore is, straight above or below a point dx along the island
+      var lo=0,hi=I.ry*1.3,k,m;for(k=0;k<20;k++){m=(lo+hi)/2;if(landAt(I.x+dx,I.y+sgn*m))lo=m;else hi=m;}return lo;}
+    function landAt(x,y){var ddx=x-I.x,ddy=y-I.y,f=loneF(Math.atan2(ddy,ddx)),rx=I.rx*f,ry=I.ry*f;return ddx*ddx/(rx*rx)+ddy*ddy/(ry*ry)<1;}
+    o.push({x:I.x-I.rx*loneF(P)-46,y:I.y,h:0,col:0,wh:0});
+    o.push({x:I.x+I.rx*loneF(0)+46,y:I.y,h:P,col:2,wh:0});
+    [[-44,-1,1],[44,-1,0],[-44,1,2],[44,1,1]].forEach(function(d){
+      o.push({x:I.x+d[0],y:I.y+d[1]*(edge(d[0],d[1])+46),h:d[1]<0?P/2:-P/2,col:d[2],wh:0});});
+    return o;},
+  spawns:function(){return[{e:'L',a:70,b:H-60},{e:'R',a:70,b:H-60},{e:'T',a:230,b:W-150},{e:'B',a:60,b:W-60}];},
+  outline:function(g,o,wob){
+    var I=lone(), a; g.beginPath();
+    for(a=0;a<6.3;a+=0.05){var f=loneF(a),w=wob?3*Math.sin(a*7+o):0,px=I.x+Math.cos(a)*(I.rx*f+o+w),py=I.y+Math.sin(a)*(I.ry*f+o+w);if(a===0)g.moveTo(px,py);else g.lineTo(px,py);}
+    g.closePath();
+  },
+  extras:function(g,R){var I=lone();beacon(g,I.x,I.y);},
+  clear:function(){var I=lone();return[[I.x,I.y]];},
+  lights:function(){var I=lone();return[[I.x,I.y]];}
 });
 function beacon(g,lx,ly){
   g.fillStyle='rgba(255,236,150,.25)'; g.beginPath(); g.arc(lx,ly,26,0,7); g.fill();
@@ -444,14 +485,14 @@ function applyOpts(){
 
 /* ---------- game ---------- */
 function newGame(){
-  review=false; viewOpp=false; mp.snap=null; hazards=[]; hazT=40+Math.random()*15;
+  review=false; viewOpp=false; mp.snap=null; hazards=[]; hazT=D.hazFirst+Math.random()*15; nightT=0; dk=night?1:0; banner=null; mp.nightUsed=false;
   boats=[];floats=[];blasts=[];pend=[];draws={};score=0;away=0;time=0;spawnT=1;paused=false;
   for(var i=0;i<berths.length;i++)berths[i].occupant=null;
   state='play';
 }
 function randCargo(ti){
   // single-colour loads to begin with; mixed loads only once the game is well under way
-  var pool=time<45?2:3, first=(Math.random()*pool)|0, cargo=[], mix=time>100?0.35:0;
+  var pool=time<D.col3?2:3, first=(Math.random()*pool)|0, cargo=[], mix=time>D.mix?D.mixP:0;
   for(var k=0;k<TYPES[ti].cap;k++)cargo.push(k===0||Math.random()>=mix?first:(Math.random()*pool)|0);
   return cargo;
 }
@@ -479,8 +520,8 @@ function spawn(){
     for(var i=0;i<boats.length;i++){var o=boats[i];if(Math.hypot(o.x-x,o.y-y)<170)ok=false;}
     for(i=0;i<pend.length;i++)if(Math.hypot(pend[i].x-x,pend[i].y-y)<170)ok=false;
     if(!ok)continue;
-    var r=Math.random(), ti=time<60?(r<0.55?0:1):(r<0.45?0:r<0.8?1:2);
-    pend.push({x:x,y:y,h:h,type:ti,cargo:randCargo(ti),t:1.6,opp:false});
+    var r=Math.random(), ti=time<D.smallOnly?0:time<D.big?(r<0.55?0:1):(r<0.45?0:r<0.8?1:2);
+    pend.push({x:x,y:y,h:h,type:ti,cargo:randCargo(ti),t:D.warn,opp:false});
     return;
   }
 }
@@ -505,7 +546,7 @@ function spawnHazard(){
 }
 var SPOUT_PUSH=[1,0.55,0.25];   // how far a waterspout carries each size of ship
 function updateHazards(dt){
-  hazT-=dt; if(hazT<=0){spawnHazard();hazT=28+Math.random()*17;}
+  hazT-=dt; if(hazT<=0){spawnHazard();hazT=D.hazGap+Math.random()*17;}
   for(var i=hazards.length-1;i>=0;i--){
     var hz=hazards[i], j, b, d; hz.t+=dt;
     if(hz.k==='whirl'){
@@ -567,7 +608,7 @@ function crash(a,b){
   blasts.push({x:x,y:y,t:0}); sfx('crash');
   state='crash'; overT=0; draws={};
   if(mp.st==='play'){mp.result='lose';mp.st='done';send({k:'lost'});sendSnap();}
-  if(score>best){best=score;try{localStorage.setItem('safeharbour.best',String(best));}catch(e){}}
+  if(score>best){best=score;try{localStorage.setItem('safeharbour.best.'+diff,String(best));}catch(e){}}
 }
 function dockAt(b,idx){
   var t=berths[idx], off=Math.max(0,TYPES[b.type].L/2-42);     // long ships sit a little further out so the bow clears the quay
@@ -604,7 +645,8 @@ function updateBoat(b,dt){
   }
   if(b.immT>0)b.immT-=dt;
   if(b.heldT>0){b.heldT-=dt;b.dh+=dt*4.5;if(b.heldT<=0)b.immT=5;return;}   // caught in a whirlpool: spun on the spot, then let go
-  var step=b.speed*dt, nx=b.x, ny=b.y;
+  // a ship with no course idles along more slowly (by difficulty) until it is given one
+  var step=b.speed*dt*((b.path.length||b.entering)?1:D.drift), nx=b.x, ny=b.y;
   while(step>0&&b.path.length){
     var p=b.path[0];
     // a dock takes one ship: if another ship got there first, this one loses its docking lock and simply sails on
@@ -668,16 +710,20 @@ function update(dt){
   if(state==='crash'){overT+=dt;if(overT>1.4)state='over';return;}
   if(state!=='play'||paused)return;
   time+=dt; spawnT-=dt;
-  if(spawnT<=0){spawn();spawnT=Math.max(3.3,8.8-time*0.016)*(map.pace||1)*(0.8+Math.random()*0.4)*(mp.st==='play'?1.7:1);}
+  if(spawnT<=0){spawn();spawnT=Math.max(D.min,8.8-time*0.016)*D.pace*(map.pace||1)*(0.8+Math.random()*0.4)*(mp.st==='play'?1.7:1);}
   for(i=pend.length-1;i>=0;i--){pend[i].t-=dt;if(pend[i].t<=0){boats.push(makeBoat(pend[i]));pend.splice(i,1);}}
   updateHazards(dt);
   for(i=0;i<boats.length;i++)updateBoat(boats[i],dt);
   for(i=boats.length-1;i>=0;i--)if(boats[i].gone){for(var k in draws)if(draws[k]===boats[i])delete draws[k];boats.splice(i,1);}
   for(i=0;i<boats.length;i++)boats[i].warn=false;
-  if(night)updateLights(dt);
+  if(nightT>0)nightT-=dt;
+  var dkT=(night||nightT>0)?1:0; dk+=Math.max(-dt/1.5,Math.min(dt/1.5,dkT-dk));     // dusk and dawn take a second and a half
+  if(dk>0)updateLights(dt);
+  if(banner){banner.t+=dt;if(banner.t>3)banner=null;}
   for(i=0;i<boats.length;i++)for(j=i+1;j<boats.length;j++){
     var a=boats[i], b=boats[j];
     if(a.state==='docked'&&b.state==='docked')continue;
+    if(D.safe&&(a.state==='docked'||b.state==='docked'))continue;      // Easy: a ship in dock can't be hit
     // nothing off-screen counts: a collision must be something the player can see
     if(!onScreen(a)||!onScreen(b))continue;
     if(Math.hypot(a.x-b.x,a.y-b.y)>220)continue;
@@ -742,7 +788,7 @@ function wire(c){
   mp.conn=c;
   c.on('open',function(){
     if(mp.conn!==c)return; mp.last=clock;
-    if(mp.role==='host'){send({k:'start',map:mapIdx,night:night});startMP(mapIdx);}
+    if(mp.role==='host'){send({k:'start',map:mapIdx,night:night,diff:diff});startMP(mapIdx);}
   });
   c.on('data',function(d){if(mp.conn!==c||!d||typeof d!=='object')return;mp.last=clock;onMsg(d);});
   c.on('close',function(){if(mp.conn===c)oppGone();});
@@ -786,9 +832,9 @@ function askRematch(){
   if(mp.gone||!mp.conn||!mp.conn.open){enterLobby();return;}
   mp.myAgain=true; send({k:'again'}); state='lobby'; mp.st='rewait'; boats=[]; pend=[]; tryRematch();
 }
-function tryRematch(){if(mp.role==='host'&&mp.myAgain&&mp.theirAgain&&mp.st==='rewait'){send({k:'start',map:mapIdx,night:night});startMP(mapIdx);}}
+function tryRematch(){if(mp.role==='host'&&mp.myAgain&&mp.theirAgain&&mp.st==='rewait'){send({k:'start',map:mapIdx,night:night,diff:diff});startMP(mapIdx);}}
 function onMsg(d){
-  if(d.k==='start'){if(mp.role==='join'&&(mp.st==='connecting'||mp.st==='rewait'||mp.st==='done'))night=!!d.night;startMP(d.map|0);}
+  if(d.k==='start'){if(mp.role==='join'&&(mp.st==='connecting'||mp.st==='rewait'||mp.st==='done')){night=!!d.night;if(d.diff!==undefined)setDiff(d.diff);startMP(d.map|0);}}
   else if(d.k==='ship'){
     if(mp.st!=='play')return;
     send({k:'ack',id:d.id});
@@ -807,6 +853,7 @@ function onMsg(d){
   else if(d.k==='snap'){takeSnap(d);}
   else if(d.k==='again'){mp.theirAgain=true;tryRematch();}
   else if(d.k==='bye'){oppGone();}
+  else if(d.k==='nightfall'){if(mp.st==='play'){nightT=20;banner={text:'Night falls!',t:0};sfx('whirl');}}
 }
 function mpTick(){
   // ships in transit are re-sent until the other phone confirms them
@@ -899,6 +946,7 @@ function up(e){
     for(var ci=0;ci<chips.length;ci++){var ch=chips[ci];
       if(p.x>ch.x&&p.x<ch.x+ch.w&&p.y>ch.y&&p.y<ch.y+ch.h){
         if(ch.act==='map'){if(ch.map!==mapIdx)setMap(ch.map);}
+        else if(ch.act==='diff'){setDiff(ch.map);}
         else if(ch.act==='day'){night=false;applyOpts();}
         else if(ch.act==='night'){night=true;applyOpts();}
         else if(ch.act==='settings'){settings=true;}
@@ -918,7 +966,11 @@ function up(e){
     return;
   }
   if(state==='play'){
-    if(hitBtn(p,W-40,32,24)&&mp.st!=='play'){paused=!paused;return;}
+    if(hitBtn(p,W-40,32,24)){
+      if(mp.st!=='play'){paused=!paused;return;}
+      // two-player: the moon button, once per game, sends 20 seconds of night to the other harbour
+      if(!night&&!mp.nightUsed){mp.nightUsed=true;send({k:'nightfall'});floats.push({x:W-120,y:78,t:0,text:'Night sent!',c:'#fff'});sfx('snap');}
+      return;}
     if(hitBtn(p,W-92,32,24)){settings=true;if(mp.st!=='play')paused=true;return;}
     if(paused){paused=false;}
   }
@@ -969,7 +1021,7 @@ function drawPath(b){
 function drawBoat(b){
   var T=TYPES[b.type], L=T.L, w=T.w;
   // at night, during play, cargo colour is hidden unless the ship is lit (b.lit: 0 dark .. 1 fully lit)
-  var lit=(night&&(state==='play'||state==='crash'))?(b.lit||0):1;
+  var lit=(state==='play'||state==='crash')?Math.max(b.lit||0,1-dk):1;
   ctx.save(); ctx.translate(b.x+2,b.y+3); ctx.rotate(b.dh); ctx.fillStyle='rgba(0,30,45,.28)'; hullPath(L,w,T.bs); ctx.fill(); ctx.restore();
   ctx.save(); ctx.translate(b.x,b.y); ctx.rotate(b.dh);
   ctx.fillStyle=T.hull; hullPath(L,w,T.bs); ctx.fill(); ctx.strokeStyle=T.trim; ctx.lineWidth=1.4; ctx.stroke();
@@ -1007,7 +1059,7 @@ function drawNight(){
   if(!dark||dark.width!==w||dark.height!==h){dark=document.createElement('canvas');dark.width=w;dark.height=h;}
   var g=dark.getContext('2d'), Ls=map.lights?map.lights():[], i, k, gr, far=Math.max(W,H)*1.3;
   g.setTransform(s,0,0,s,0,0); g.globalCompositeOperation='source-over'; g.clearRect(0,0,W,H);
-  g.fillStyle='rgba(5,12,32,0.8)'; g.fillRect(0,0,W,H);
+  g.fillStyle='rgba(5,12,32,'+(0.8*dk).toFixed(3)+')'; g.fillRect(0,0,W,H);
   g.globalCompositeOperation='destination-out';
   for(k=0;k<Ls.length;k++){var lx=Ls[k][0], ly=Ls[k][1], a=beamAngle(k);
     gr=g.createRadialGradient(lx,ly,0,lx,ly,far); gr.addColorStop(0,'rgba(0,0,0,.92)'); gr.addColorStop(0.45,'rgba(0,0,0,.8)'); gr.addColorStop(1,'rgba(0,0,0,.6)');
@@ -1021,15 +1073,17 @@ function drawNight(){
   for(i=0;i<blasts.length;i++)if(blasts[i].t<1.4)punch(g,blasts[i].x,blasts[i].y,150,0.9);
   ctx.drawImage(dark,0,0,W,H);
   // the lights themselves, drawn over the darkness
+  ctx.save(); ctx.globalAlpha=dk; var A0=dk;
   ctx.globalCompositeOperation='lighter';
   for(k=0;k<Ls.length;k++){ctx.fillStyle='rgba(255,236,160,0.10)';ctx.beginPath();ctx.moveTo(Ls[k][0],Ls[k][1]);ctx.arc(Ls[k][0],Ls[k][1],far,beamAngle(k)-BEAM_HALF,beamAngle(k)+BEAM_HALF);ctx.closePath();ctx.fill();}
   ctx.globalCompositeOperation='source-over';
   for(k=0;k<Ls.length;k++){ctx.fillStyle='rgba(255,240,170,.35)';ctx.beginPath();ctx.arc(Ls[k][0],Ls[k][1],11,0,7);ctx.fill();ctx.fillStyle='#fff6c4';ctx.beginPath();ctx.arc(Ls[k][0],Ls[k][1],5,0,7);ctx.fill();}
   for(i=0;i<berths.length;i++){be=berths[i];var px=be.x+Math.cos(be.h)*40, py=be.y+Math.sin(be.h)*40, c=CARGO[be.col];   // a lamp in each dock's colour
-    ctx.globalAlpha=0.35;ctx.fillStyle=c.c;ctx.beginPath();ctx.arc(px,py,13,0,7);ctx.fill();ctx.globalAlpha=1;
+    ctx.globalAlpha=0.35*A0;ctx.fillStyle=c.c;ctx.beginPath();ctx.arc(px,py,13,0,7);ctx.fill();ctx.globalAlpha=A0;
     ctx.fillStyle=c.c;ctx.beginPath();ctx.arc(px,py,6,0,7);ctx.fill();ctx.strokeStyle='rgba(255,255,255,.85)';ctx.lineWidth=1.5;ctx.stroke();}
   for(i=0;i<boats.length;i++){b=boats[i];T=TYPES[b.type];bx=b.x+Math.cos(b.dh)*(T.L/2-3);by=b.y+Math.sin(b.dh)*(T.L/2-3);
     ctx.fillStyle='rgba(255,246,200,.4)';ctx.beginPath();ctx.arc(bx,by,6.5,0,7);ctx.fill();ctx.fillStyle='#fffbe6';ctx.beginPath();ctx.arc(bx,by,2.8,0,7);ctx.fill();}
+  ctx.restore();
 }
 function drawSettings(){
   var k=Math.min(1,(H-16)/340), i; ctx.save(); ctx.translate(W/2,H/2); ctx.scale(k,k); ctx.translate(-W/2,-H/2);
@@ -1079,7 +1133,16 @@ function drawHUD(){
   // pause (solo only)
   if(mp.st!=='play'&&!mp.result){ctx.fillStyle='rgba(255,252,240,.92)'; ctx.beginPath(); ctx.arc(W-40,32,20,0,7); ctx.fill(); ctx.stroke();}
   ctx.fillStyle='#1d3b4a';
-  if(mp.st==='play'||mp.result){}
+  if(mp.st==='play'){
+    if(!night&&!mp.nightUsed){
+      var pu=0.5+0.5*Math.sin(clock*3);
+      ctx.fillStyle='#16233f'; ctx.beginPath(); ctx.arc(W-40,32,20,0,7); ctx.fill(); ctx.strokeStyle='rgba(255,246,196,'+(0.5+0.5*pu).toFixed(2)+')'; ctx.lineWidth=2.5; ctx.stroke();
+      ctx.fillStyle='#fff6c4'; ctx.beginPath(); ctx.arc(W-41,32,9,0,7); ctx.fill();
+      ctx.fillStyle='#16233f'; ctx.beginPath(); ctx.arc(W-36.5,28.5,7.5,0,7); ctx.fill();
+      ctx.strokeStyle='rgba(90,70,40,.35)'; ctx.lineWidth=1.5;
+    }
+  }
+  else if(mp.result){}
   else if(paused){ctx.beginPath();ctx.moveTo(W-46,23);ctx.lineTo(W-31,32);ctx.lineTo(W-46,41);ctx.closePath();ctx.fill();}
   else{ctx.fillRect(W-47,24,5,16);ctx.fillRect(W-38,24,5,16);}
   // settings (sound choices)
@@ -1105,7 +1168,7 @@ function render(){
   ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#0f4c5c'; ctx.fillRect(0,0,cv.width,cv.height);
   applyT();
   ctx.save(); ctx.beginPath(); ctx.rect(0,0,W,H); ctx.clip();
-  var i, showOpp=state==='over'&&review&&viewOpp&&mp.snap, nightOn=night&&(state==='play'||state==='crash');
+  var i, showOpp=state==='over'&&review&&viewOpp&&mp.snap, nightOn=dk>0.01&&(state==='play'||state==='crash');
   if(showOpp){
     var sn=mp.snap, sk=Math.min(W/sn.W,H/sn.H);
     ctx.fillStyle='#0b3947'; ctx.fillRect(0,0,W,H);
@@ -1147,49 +1210,43 @@ function render(){
       ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(-2,-13); ctx.lineTo(-2,-5); ctx.lineTo(-14,-5); ctx.lineTo(-14,5); ctx.lineTo(-2,5); ctx.lineTo(-2,13); ctx.closePath();
       ctx.fillStyle=pe.opp?'#ff5a3c':'#ffd23f'; ctx.fill(); ctx.strokeStyle='#1d3b4a'; ctx.lineWidth=2.5; ctx.lineJoin='round'; ctx.stroke(); ctx.restore();}
     drawHUD();
+    if(nightT>0){ctx.fillStyle='rgba(22,35,63,.9)';rr(ctx,14,58,104,26,13);ctx.fill();uiText('Night  '+Math.ceil(nightT)+'s',66,71.5,13,'#fff6c4','center','700');}
+    if(banner){var ba=Math.min(1,banner.t/0.3)*Math.min(1,(3-banner.t)/0.8);ctx.globalAlpha=Math.max(0,ba);text(banner.text,W/2,H*0.3,52,'#fff6c4','center');ctx.globalAlpha=1;}
     if(paused){ctx.fillStyle='rgba(10,45,60,.5)';ctx.fillRect(0,0,W,H);text('Paused',W/2,H/2-10,54,'#fffaf0','center');uiText('Tap to carry on',W/2,H/2+38,20,'#fffaf0','center','500');}
   }
   if(state==='menu'){
-    var km=Math.min(1,(H-20)/470); ctx.save(); ctx.translate(W/2,H/2); ctx.scale(km,km); ctx.translate(-W/2,-H/2);
-    var p=panel(Math.min(640,W-60),470), cx=W/2, y=p.y;
-    text('Safe Harbour',cx,y+62,58,'#1d3b4a','center');
-    uiText('Guide the ships in. Keep them apart.',cx,y+106,18,'#6b5a3c','center','500');
-    var lx=cx-225, ly=y+146, gap=33;
-    ctx.strokeStyle='#1d3b4a';ctx.lineWidth=2.5;ctx.setLineDash([2,7]);ctx.lineCap='round';ctx.beginPath();ctx.moveTo(lx-10,ly+6);ctx.quadraticCurveTo(lx,ly-12,lx+12,ly+2);ctx.stroke();ctx.setLineDash([]);
-    uiText('Drag from a ship to draw its course',lx+34,ly,19,'#1d3b4a','left','500');
-    chip(lx-6,ly+gap,0);chip(lx+8,ly+gap,1);
-    uiText('Take each crate to the dock of its colour',lx+34,ly+gap,19,'#1d3b4a','left','500');
-    ctx.strokeStyle='#1d3b4a';ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(lx,ly+gap*2,9,0,7);ctx.stroke();
-    uiText('Ships wait at the dock until you send them off',lx+34,ly+gap*2,19,'#1d3b4a','left','500');
-    ctx.strokeStyle='#e4572e';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(lx-8,ly+gap*3-8);ctx.lineTo(lx+8,ly+gap*3+8);ctx.moveTo(lx+8,ly+gap*3-8);ctx.lineTo(lx-8,ly+gap*3+8);ctx.stroke();
-    uiText('One collision and the harbour closes',lx+34,ly+gap*3,19,'#1d3b4a','left','500');
+    var PH=404, km=Math.min(1,(H-16)/PH); ctx.save(); ctx.translate(W/2,H/2); ctx.scale(km,km); ctx.translate(-W/2,-H/2);
+    var pw=Math.min(640,W-40), p=panel(pw,PH), cx=W/2, y=p.y;
     chips=[];
+    function pick(label,x,yy,w,on,fill,ink,act,extra){
+      ctx.fillStyle=on?fill:'#efe6cd'; rr(ctx,x,yy,w,34,17); ctx.fill();
+      ctx.strokeStyle=on?fill:'#c9b383'; ctx.lineWidth=2; ctx.stroke();
+      uiText(label,x+w/2,yy+17.5,w<110?14:15,on?ink:'#6b5a3c','center','700');
+      var c={x:x-4,y:yy-5,w:w+8,h:44,act:act}; if(extra!==undefined)c.map=extra; chips.push(c);
+    }
+    text('Safe Harbour',cx,y+50,50,'#1d3b4a','center');
+    uiText('Drag from a ship to draw its course. Match each crate to its dock. Keep the ships apart.',cx,y+90,14,'#6b5a3c','center','500');
+    // maps, three to a row
+    var per=3, cw=Math.floor((pw-56-(per-1)*8)/per);
     for(var mi=0;mi<MAPS.length;mi++){
-      var cw=Math.min(170,Math.floor((Math.min(640,W-60)-36-(MAPS.length-1)*8)/MAPS.length)), chx=cx+(mi-(MAPS.length-1)/2)*(cw+8)-cw/2, chy=y+276, on=mi===mapIdx;
-      ctx.fillStyle=on?'#1d3b4a':'#efe6cd'; rr(ctx,chx,chy,cw,38,19); ctx.fill();
-      ctx.strokeStyle=on?'#1d3b4a':'#c9b383'; ctx.lineWidth=2; ctx.stroke();
-      uiText(MAPS[mi].name,chx+cw/2,chy+19,cw<150?13:16,on?'#fffaf0':'#6b5a3c','center','600');
-      chips.push({x:chx,y:chy-4,w:cw,h:46,act:'map',map:mi});
+      var row=(mi/per)|0, inRow=Math.min(per,MAPS.length-row*per);
+      pick(MAPS[mi].name,cx-(inRow*cw+(inRow-1)*8)/2+(mi%per)*(cw+8),y+112+row*42,cw,mi===mapIdx,'#1d3b4a','#fffaf0','map',mi);
     }
-    // day or night
-    for(var dn=0;dn<2;dn++){
-      var dx=cx-124+dn*128, dy=y+326, don=(dn===1)===night;
-      ctx.fillStyle=don?(dn?'#16233f':'#f3b61f'):'#efe6cd'; rr(ctx,dx,dy,120,34,17); ctx.fill();
-      ctx.strokeStyle=don?(dn?'#16233f':'#b98608'):'#c9b383'; ctx.lineWidth=2; ctx.stroke();
-      uiText(dn?'Night':'Day',dx+68,dy+17,15,don?(dn?'#fff6c4':'#3d2c00'):'#6b5a3c','center','700');
-      ctx.fillStyle=don?(dn?'#fff6c4':'#3d2c00'):'#8a7a5c'; ctx.beginPath(); ctx.arc(dx+30,dy+17,6.5,0,7); ctx.fill();
-      if(dn){ctx.fillStyle=don?'#16233f':'#efe6cd';ctx.beginPath();ctx.arc(dx+33.5,dy+14.5,5.5,0,7);ctx.fill();}        // crescent
-      else{ctx.strokeStyle=ctx.fillStyle;ctx.lineWidth=1.8;for(var ry2=0;ry2<8;ry2++){var ra=ry2*Math.PI/4;ctx.beginPath();ctx.moveTo(dx+30+Math.cos(ra)*8.5,dy+17+Math.sin(ra)*8.5);ctx.lineTo(dx+30+Math.cos(ra)*11.5,dy+17+Math.sin(ra)*11.5);ctx.stroke();}}
-      chips.push({x:dx-4,y:dy-6,w:128,h:46,act:dn?'night':'day'});
-    }
-    var gx=p.x+Math.min(640,W-60)-36, gy=y+36;
-    ctx.fillStyle='#efe6cd'; ctx.beginPath(); ctx.arc(gx,gy,20,0,7); ctx.fill(); ctx.strokeStyle='#c9b383'; ctx.lineWidth=2; ctx.stroke(); gearIcon(gx,gy);
+    // light and difficulty
+    var ry0=y+112+Math.ceil(MAPS.length/per)*42+22, lx0=cx-pw/2+28, rx0=cx+pw/2-28-3*96-16;
+    uiText('LIGHT',lx0+4,ry0-10,11,'#8a7a5c','left','700'); uiText('DIFFICULTY',rx0+4,ry0-10,11,'#8a7a5c','left','700');
+    pick('Day',lx0,ry0,92,!night,'#f3b61f','#3d2c00','day'); pick('Night',lx0+100,ry0,92,night,'#16233f','#fff6c4','night');
+    var dcol=['#2a9d6f','#e09f1f','#d1483a'];
+    for(var di=0;di<3;di++)pick(DIFF[di].name,rx0+di*104,ry0,96,di===diff,dcol[di],'#ffffff','diff',di);
+    var gx=p.x+pw-34, gy=y+34;
+    ctx.fillStyle='#efe6cd'; ctx.beginPath(); ctx.arc(gx,gy,19,0,7); ctx.fill(); ctx.strokeStyle='#c9b383'; ctx.lineWidth=2; ctx.stroke(); gearIcon(gx,gy);
     ctx.fillStyle='#efe6cd'; ctx.beginPath(); ctx.arc(gx,gy,3.4,0,7); ctx.fill();
     chips.push({x:gx-26,y:gy-26,w:52,h:52,act:'settings'});
-    button('Set sail',cx-122,y+402); chips.push({x:cx-232,y:y+371,w:220,h:60,act:'solo'});
-    button('Two players',cx+122,y+402,true); chips.push({x:cx+12,y:y+371,w:220,h:60,act:'mp'});
-    if(rot)uiText('Best played with the phone held sideways',cx,y+446,14,'#8a7a5c','center','500');
-    else if(best>0)uiText('Best so far: '+best,cx,y+446,15,'#8a7a5c','center','600');
+    var by0=ry0+86;
+    button('Set sail',cx-122,by0); chips.push({x:cx-232,y:by0-31,w:220,h:60,act:'solo'});
+    button('Two players',cx+122,by0,true); chips.push({x:cx+12,y:by0-31,w:220,h:60,act:'mp'});
+    if(rot)uiText('Best played with the phone held sideways',cx,by0+46,13,'#8a7a5c','center','500');
+    else if(best>0)uiText('Best on '+D.name+': '+best,cx,by0+46,14,'#8a7a5c','center','600');
     ctx.restore(); fitChips(km);
   }
   if(state==='over'&&review){
@@ -1232,8 +1289,9 @@ function render(){
     function smallBtn(label,cx,cy,act,w){w=w||150;ctx.fillStyle='#efe6cd';rr(ctx,cx-w/2,cy-18,w,36,18);ctx.fill();ctx.strokeStyle='#c9b383';ctx.lineWidth=2;ctx.stroke();uiText(label,cx,cy,15,'#6b5a3c','center','600');chips.push({x:cx-w/2,y:cy-23,w:w,h:46,act:act});}
     if(mp.st==='choose'){
       text('Two players',c3,ly0+56,46,'#1d3b4a','center');
-      uiText('One player hosts and gets a code.',c3,ly0+112,17,'#6b5a3c','center','500');
-      uiText('The other joins with that code.',c3,ly0+136,17,'#6b5a3c','center','500');
+      uiText('One player hosts and gets a code; the other joins with it.',c3,ly0+104,16,'#6b5a3c','center','500');
+      uiText('Each of you gets one moon button per game:',c3,ly0+130,15,'#6b5a3c','center','500');
+      uiText('tap it to send 20 seconds of night to the other harbour.',c3,ly0+150,15,'#6b5a3c','center','500');
       button('Host a game',c3-122,ly0+206); chips.push({x:c3-232,y:ly0+175,w:220,h:60,act:'host'});
       button('Join a game',c3+122,ly0+206,true); chips.push({x:c3+12,y:ly0+175,w:220,h:60,act:'join'});
       smallBtn('Back',c3,ly0+282,'cancel');
@@ -1244,7 +1302,7 @@ function render(){
       else{
         for(ki=0;ki<4;ki++){ctx.fillStyle='#fff';rr(ctx,c3-134+ki*68,ly0+84,60,70,10);ctx.fill();ctx.strokeStyle='#1d5a73';ctx.lineWidth=3;ctx.stroke();uiText(mp.code[ki],c3-104+ki*68,ly0+121,44,'#1d3b4a','center','800');}
         uiText('The other player taps Two players, then Join'+dots,c3,ly0+186,16,'#6b5a3c','center','500');
-        uiText('Map: '+map.name+(night?' \u00b7 at night':''),c3,ly0+210,15,'#8a7a5c','center','500');
+        uiText(map.name+' \u00b7 '+D.name+(night?' \u00b7 Night':''),c3,ly0+210,15,'#8a7a5c','center','600');
       }
       if(mp.code&&navigator.share){smallBtn('Send invite link',c3-90,ly0+272,'share',170);smallBtn('Cancel',c3+95,ly0+272,'cancel',130);}
       else smallBtn('Cancel',c3,ly0+272,'cancel');
@@ -1283,7 +1341,7 @@ function frame(t){
 resize();
 // an invite link ends in #CODE: go straight to joining that game
 (function(){var h=(location.hash||'').replace('#','').toUpperCase();if(/^[A-Z]{4}$/.test(h)){try{history.replaceState(null,'',location.pathname+location.search);}catch(e){}enterLobby();joinGame(h);}})();
-window.__hm={get mp(){return mp;},get pend(){return pend;},enterLobby:enterLobby,hostGame:hostGame,joinGame:joinGame,get chips(){return chips;},get schips(){return schips;},get settings(){return settings;},get opts(){return opts;},get night(){return night;},set night(v){night=v;},get paused(){return paused;},get hazards(){return hazards;},spawnHazard:spawnHazard,set hazT(v){hazT=v;},get review(){return [review,viewOpp];},get blasts(){return blasts;},get boats(){return boats;},get berths(){return berths;},get state(){return state;},get score(){return score;},get away(){return away;},get W(){return W;},get H(){return H;},update:update,spawn:spawn,undock:undock,newGame:newGame,setMap:setMap,isLand:function(x,y){return isLand(x,y);},
+window.__hm={get mp(){return mp;},get pend(){return pend;},enterLobby:enterLobby,hostGame:hostGame,joinGame:joinGame,get chips(){return chips;},get schips(){return schips;},get settings(){return settings;},get opts(){return opts;},get night(){return night;},set night(v){night=v;},get diff(){return diff;},setDiff:setDiff,get dk(){return dk;},get nightT(){return nightT;},get paused(){return paused;},get hazards(){return hazards;},spawnHazard:spawnHazard,set hazT(v){hazT=v;},get review(){return [review,viewOpp];},get blasts(){return blasts;},get boats(){return boats;},get berths(){return berths;},get state(){return state;},get score(){return score;},get away(){return away;},get W(){return W;},get H(){return H;},update:update,spawn:spawn,undock:undock,newGame:newGame,setMap:setMap,isLand:function(x,y){return isLand(x,y);},
   set time(v){time=v;}};
 requestAnimationFrame(frame);
 })();
