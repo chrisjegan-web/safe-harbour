@@ -503,7 +503,7 @@ function randCargo(ti){
 }
 function makeBoat(p){
   var T=TYPES[p.type], back=Math.max(0,T.L/2-28);   // long ships start further out so they slide in from off-screen
-  return {id:nextId++,noDock:-1,lit:0,x:p.x-Math.cos(p.h)*back,y:p.y-Math.sin(p.h)*back,h:p.h,dh:p.h,type:p.type,r:T.r,speed:T.speed,cargo:p.cargo,path:[],state:'sail',
+  return {id:nextId++,opp:!!p.opp,noDock:-1,lit:0,x:p.x-Math.cos(p.h)*back,y:p.y-Math.sin(p.h)*back,h:p.h,dh:p.h,type:p.type,r:T.r,speed:T.speed,cargo:p.cargo,path:[],state:'sail',
     berthIdx:-1,targetIdx:-1,unloadT:0,entering:true,grace:0,trail:[],trailT:0,warn:false,honkT:0};
 }
 function edgeSeg(e){var sg=map.spawns();for(var i=0;i<sg.length;i++)if(sg[i].e===e)return sg[i];return null;}
@@ -628,7 +628,7 @@ function updateSent(dt){
     if(s2.t<2.6)continue;
     var clear=true; for(j=0;j<boats.length;j++)if(Math.hypot(boats[j].x-s2.x,boats[j].y-s2.y)<80)clear=false;
     if(!clear){s2.t=2.2;if(++s2.tries>8){var np=waterPoint();if(np){s2.x=np.x;s2.y=np.y;s2.t=1.2;s2.tries=0;}}continue;}   // wait for the spot to be clear
-    var nb=makeBoat({x:s2.x,y:s2.y,h:s2.h,type:s2.type,cargo:s2.cargo}); nb.x=s2.x; nb.y=s2.y; nb.entering=false; boats.push(nb);
+    var nb=makeBoat({x:s2.x,y:s2.y,h:s2.h,type:s2.type,cargo:s2.cargo,opp:true}); nb.x=s2.x; nb.y=s2.y; nb.entering=false; boats.push(nb);
     floats.push({x:s2.x,y:s2.y-24,t:0,text:'!',c:'#fff'}); sfx('incoming'); mp.got++; surf.splice(i,1);
   }
 }
@@ -885,7 +885,7 @@ function oppGone(){
   else if(mp.st==='connecting'){mp.err='The connection was lost.';mp.st='join';mp.entry='';netClose();}
 }
 function sendSnap(){
-  var bs=[]; for(var i=0;i<boats.length;i++){var b=boats[i];bs.push({x:Math.round(b.x),y:Math.round(b.y),h:Math.round(b.dh*100)/100,t:b.type,c:b.cargo,d:b.state==='docked'?b.berthIdx:-1,w:b.warn?1:0});}
+  var bs=[]; for(var i=0;i<boats.length;i++){var b=boats[i];bs.push({x:Math.round(b.x),y:Math.round(b.y),h:Math.round(b.dh*100)/100,t:b.type,c:b.cargo,d:b.state==='docked'?b.berthIdx:-1,w:b.warn?1:0,o:b.opp?1:0});}
   send({k:'snap',W:Math.round(W),H:H,map:mapIdx,score:score,boats:bs,blast:blasts.length?{x:Math.round(blasts[0].x),y:Math.round(blasts[0].y)}:null});
 }
 function takeSnap(d){
@@ -898,7 +898,7 @@ function takeSnap(d){
   W=sW;H=sH;berths=sB;bg=sBg;map=sMap;mapIdx=sIdx;
   if(!sn)return;
   for(var i=0;i<d.boats.length;i++){var o=d.boats[i],ti=o.t|0;if(ti<0||ti>2||!o.c||o.c.length>4)continue;
-    sn.boats.push({x:+o.x||0,y:+o.y||0,h:+o.h||0,dh:+o.h||0,type:ti,r:TYPES[ti].r,cargo:o.c.map(function(c){return c===null||c===undefined?null:Math.max(0,Math.min(2,c|0));}),
+    sn.boats.push({opp:!!o.o,x:+o.x||0,y:+o.y||0,h:+o.h||0,dh:+o.h||0,type:ti,r:TYPES[ti].r,cargo:o.c.map(function(c){return c===null||c===undefined?null:Math.max(0,Math.min(2,c|0));}),
       state:'sail',docked:o.d>=0,warn:false,path:[],trail:[],targetIdx:-1,berthIdx:-1,unloadT:0});}
   if(d.blast)sn.blast={x:+d.blast.x||0,y:+d.blast.y||0};
   mp.snap=sn;
@@ -1122,12 +1122,15 @@ function drawPath(b){
     ctx.beginPath(); ctx.arc(l.x,l.y,7,0,7); ctx.fill(); ctx.stroke();
   }else{ctx.fillStyle='#ffffff';ctx.beginPath();ctx.arc(l.x,l.y,4.5,0,7);ctx.fill();}
 }
+var OPP_COL='#ff3fd0';
 function drawBoat(b){
   var T=TYPES[b.type], L=T.L, w=T.w;
   // at night, during play, cargo colour is hidden unless the ship is lit (b.lit: 0 dark .. 1 fully lit)
   var lit=(state==='play'||state==='crash')?Math.max(b.lit||0,1-dk):1;
   ctx.save(); ctx.translate(b.x+2,b.y+3); ctx.rotate(b.dh); ctx.fillStyle='rgba(0,30,45,.28)'; hullPath(L,w,T.bs); ctx.fill(); ctx.restore();
   ctx.save(); ctx.translate(b.x,b.y); ctx.rotate(b.dh);
+  if(b.opp){   // a ship sent by the other player wears a bright pink outline (a colour no cargo or dock uses)
+    hullPath(L,w,T.bs); ctx.lineJoin='round'; ctx.strokeStyle='#ffffff'; ctx.lineWidth=9; ctx.stroke(); ctx.strokeStyle=OPP_COL; ctx.lineWidth=6; ctx.stroke();}
   ctx.fillStyle=T.hull; hullPath(L,w,T.bs); ctx.fill(); ctx.strokeStyle=T.trim; ctx.lineWidth=1.4; ctx.stroke();
   ctx.fillStyle=T.deck; hullPath(L*0.84,w*0.68,T.bs); ctx.fill();
   var cabW=T.cab; ctx.fillStyle='#ffffff'; rr(ctx,-L/2+3,-w*0.27,cabW,w*0.54,2); ctx.fill(); ctx.strokeStyle=T.trim; ctx.lineWidth=1; ctx.stroke();
@@ -1327,7 +1330,7 @@ function render(){
       var ac=[], ai; for(ai=0;ai<pe.cargo.length;ai++)if(pe.cargo[ai]!==null&&ac.indexOf(pe.cargo[ai])<0)ac.push(pe.cargo[ai]);
       var plain=dk>0.5||!ac.length;
       ctx.lineJoin='round';
-      if(pe.opp){ctx.strokeStyle='#ffffff';ctx.lineWidth=7;ctx.stroke();}
+      if(pe.opp){ctx.strokeStyle='#ffffff';ctx.lineWidth=10;ctx.stroke();ctx.strokeStyle=OPP_COL;ctx.lineWidth=7;ctx.stroke();}
       ctx.fillStyle=plain?'#d5dbe2':CARGO[ac[0]].c; ctx.fill();
       if(!plain&&ac.length>1){ctx.fillStyle=CARGO[ac[1]].c;ctx.fillRect(-14,-5,7,10);}
       ctx.strokeStyle='#10202a'; ctx.lineWidth=2.5; ctx.stroke(); ctx.restore();}
