@@ -25,7 +25,7 @@ canvas{position:fixed;left:0;top:0;width:100%;height:100%;touch-action:none;-web
 var cv=document.getElementById('c'), ctx=cv.getContext('2d');
 var H=760, W=1000, vw=0, vh=0, dpr=1, rot=false, scale=1, ox=0, oy=0;
 var bg=null;
-var CARGO=[{c:'#e4572e',d:'#a83a1b',n:'coral'},{c:'#f3b61f',d:'#b98608',n:'gold'},{c:'#8e5bd9',d:'#5f37a3',n:'violet'}];
+var CARGO=[{c:'#ff2a1f',d:'#a80d05',n:'red'},{c:'#ffe11a',d:'#a88f00',n:'yellow'},{c:'#1f5bff',d:'#0a2c9e',n:'blue'}];   // bright primaries
 var TYPES=[
  // L, w: hull length and width.  bs: where the bow starts to taper (fraction of L).  cab: cabin length
  {r:16,L:43,w:19,bs:0.05,cab:7,cap:1,speed:36,hull:'#f4efe4',deck:'#d9c7a3',trim:'#7a5a3a'},
@@ -331,8 +331,10 @@ function paintBackground(){
       g.fillStyle=c.c; g.fillRect(-4,py,8,8);
       g.fillStyle='#5d4024'; g.beginPath(); g.arc(-4,py+4,3,0,7); g.fill();
     }
-    g.fillStyle=c.c; g.globalAlpha=0.2; rr(g,-54,-18,96,36,10); g.fill();
-    g.globalAlpha=0.9; g.strokeStyle=c.c; g.lineWidth=2.5; g.setLineDash([6,5]); rr(g,-54,-18,96,36,10); g.stroke(); g.setLineDash([]);
+    // the berth: a strong wash of the dock's colour, edged in white so it stands off the water (blue especially)
+    g.fillStyle=c.c; g.globalAlpha=0.5; rr(g,-54,-18,96,36,10); g.fill();
+    g.globalAlpha=0.95; g.strokeStyle='#ffffff'; g.lineWidth=6; rr(g,-54,-18,96,36,10); g.stroke();
+    g.globalAlpha=1; g.strokeStyle=c.c; g.lineWidth=3.5; rr(g,-54,-18,96,36,10); g.stroke();
     g.globalAlpha=1; g.restore();
   }
 }
