@@ -47,6 +47,9 @@ var DIFF=[
  {name:'Medium',pace:1.0, min:3.3,big:60,mix:100,mixP:0.35,col3:45, hazFirst:40,hazGap:28,drift:0.65,safe:false,warn:2.0,smallOnly:0},
  {name:'Hard',  pace:0.8, min:2.8,big:30,mix:45, mixP:0.45,col3:0,  hazFirst:25,hazGap:20,drift:1,   safe:false,warn:1.6,smallOnly:0}
 ], diff=1, D=DIFF[1];
+var record={w:0,l:0};                 // two-player wins and losses on this phone, all games
+try{var rv=JSON.parse(localStorage.getItem('safeharbour.record')||'null');if(rv&&rv.w>=0&&rv.l>=0)record={w:rv.w|0,l:rv.l|0};}catch(e){}
+function tally(won){if(won){mp.wins=(mp.wins||0)+1;record.w++;}else{mp.losses=(mp.losses||0)+1;record.l++;}try{localStorage.setItem('safeharbour.record',JSON.stringify(record));}catch(e){}}
 var dk=0, nightT=0, banner=null;      // dk: how dark it is right now (0 day .. 1 night); nightT: seconds left of a night sent by the opponent
 var hazards=[], hazT=45;            // whirlpools and waterspouts
 var review=false, viewOpp=false;   // after a game: stats panel closed, looking at the harbours
@@ -280,7 +283,7 @@ function buildMap(){
   for(var i=0;i<berths.length;i++)berths[i].occupant=null;
   // keep docked boats attached after a resize
   for(var k=0;k<boats.length;k++){var b=boats[k];
-    if(b.berthIdx>=0&&b.state==='docked'){var nb=berths[b.berthIdx],of=Math.max(0,TYPES[b.type].L/2-42);nb.occupant=b;b.slide=null;b.x=b.dockX=nb.x-Math.cos(nb.h)*of;b.y=b.dockY=nb.y-Math.sin(nb.h)*of;}
+    if(b.berthIdx>=0&&b.state==='docked'){var nb=berths[b.berthIdx],of=TYPES[b.type].L/2-40;nb.occupant=b;b.slide=null;b.x=b.dockX=nb.x-Math.cos(nb.h)*of;b.y=b.dockY=nb.y-Math.sin(nb.h)*of;}
     if(b.targetIdx>=0&&b.path.length){var t=berths[b.targetIdx];b.path[b.path.length-1]={x:t.x,y:t.y};}
   }
 }
@@ -363,19 +366,18 @@ function paintBackground(){
     g.fillStyle='rgba(255,255,255,.25)'; g.fillRect(wc-22,-16,5,32);
     }
     for(k=-1;k<=1;k++){g.fillStyle=c.c;g.fillRect(50,k*12-5,10,10);g.strokeStyle=c.d;g.lineWidth=1.2;g.strokeRect(50,k*12-5,10,10);}
+    // the berth's colour sits inside the dock, between its two walls
+    g.fillStyle=c.c; g.globalAlpha=0.62; g.fillRect(-16,-20,58,40);
+    g.globalAlpha=1; g.strokeStyle=c.c; g.lineWidth=3; g.beginPath(); g.moveTo(-16,-20); g.lineTo(-16,20); g.stroke();      // a coloured sill across the mouth
     for(k=-1;k<=1;k+=2){
       var py=k*24-4;
-      g.fillStyle='rgba(0,40,50,.28)'; g.fillRect(-4+sxo*0.7,py+syo*0.7,50,8);
-      g.fillStyle='#b98c5a'; g.fillRect(-4,py,50,8);
+      g.fillStyle='rgba(0,40,50,.28)'; g.fillRect(-16+sxo*0.7,py+syo*0.7,62,8);
+      g.fillStyle='#b98c5a'; g.fillRect(-16,py,62,8);
       g.strokeStyle='rgba(90,60,30,.45)'; g.lineWidth=1;
-      for(x=2;x<46;x+=6){g.beginPath();g.moveTo(x,py);g.lineTo(x,py+8);g.stroke();}
-      g.fillStyle=c.c; g.fillRect(-4,py,8,8);
-      g.fillStyle='#5d4024'; g.beginPath(); g.arc(-4,py+4,3,0,7); g.fill();
+      for(x=-10;x<46;x+=6){g.beginPath();g.moveTo(x,py);g.lineTo(x,py+8);g.stroke();}
+      g.fillStyle=c.c; g.fillRect(-16,py,8,8);
+      g.fillStyle='#5d4024'; g.beginPath(); g.arc(-16,py+4,3,0,7); g.fill();
     }
-    // the berth: a strong wash of the dock's colour, edged in white so it stands off the water (blue especially)
-    g.fillStyle=c.c; g.globalAlpha=0.5; rr(g,-54,-18,96,36,10); g.fill();
-    g.globalAlpha=0.95; g.strokeStyle='#ffffff'; g.lineWidth=6; rr(g,-54,-18,96,36,10); g.stroke();
-    g.globalAlpha=1; g.strokeStyle=c.c; g.lineWidth=3.5; rr(g,-54,-18,96,36,10); g.stroke();
     g.globalAlpha=1; g.restore();
   }
 }
@@ -607,11 +609,11 @@ function crash(a,b){
   var x=(a.x+b.x)/2, y=(a.y+b.y)/2;
   blasts.push({x:x,y:y,t:0}); sfx('crash');
   state='crash'; overT=0; draws={};
-  if(mp.st==='play'){mp.result='lose';mp.st='done';send({k:'lost'});sendSnap();}
+  if(mp.st==='play'){mp.result='lose';mp.st='done';tally(false);send({k:'lost'});sendSnap();}
   if(score>best){best=score;try{localStorage.setItem('safeharbour.best.'+diff,String(best));}catch(e){}}
 }
 function dockAt(b,idx){
-  var t=berths[idx], off=Math.max(0,TYPES[b.type].L/2-42);     // long ships sit a little further out so the bow clears the quay
+  var t=berths[idx], off=TYPES[b.type].L/2-40;     // every ship ties up bow-in against the quay, so short ones sit right inside the walls
   b.slide={x:b.x,y:b.y,t:0}; b.dockX=t.x-Math.cos(t.h)*off; b.dockY=t.y-Math.sin(t.h)*off;
   b.h=t.h; b.state='docked'; b.berthIdx=idx; b.targetIdx=-1; b.path=[]; t.occupant=b; b.unloadT=0.5; b.entering=false; b.trail=[]; b.lit=1;
   for(var k in draws)if(draws[k]===b)delete draws[k];
@@ -753,6 +755,7 @@ function mpLeave(){
 }
 function enterLobby(){mpLeave(); state='lobby'; boats=[]; pend=[]; mp.st='choose';}
 function hostGame(){
+  mp.wins=0; mp.losses=0;        // a new pairing starts a new scoreboard
   netClose(); state='lobby'; mp.st='host'; mp.role='host'; mp.code=''; mp.err=''; mp.gone=false;
   if(!window.Peer){mp.err='Two-player needs an internet connection.';return;}
   var code=newCode(), pr;
@@ -772,6 +775,7 @@ function hostGame(){
   });
 }
 function joinGame(code){
+  mp.wins=0; mp.losses=0;
   netClose(); state='lobby'; mp.st='connecting'; mp.role='join'; mp.code=code; mp.err=''; mp.gone=false;
   if(!window.Peer){mp.err='Two-player needs an internet connection.';mp.st='join';return;}
   var pr; try{pr=new Peer();}catch(e){mp.err="Two-player isn't available in this browser.";mp.st='join';return;}
@@ -825,7 +829,7 @@ function startMP(mi){
 }
 function endMP(res){
   if(mp.st!=='play')return;
-  mp.result=res; mp.st='done'; if(res==='left')mp.gone=true; else sendSnap();
+  mp.result=res; mp.st='done'; if(res==='left')mp.gone=true; else{tally(true);sendSnap();}
   state='over'; draws={}; sfx('dock');
 }
 function askRematch(){
@@ -1065,7 +1069,7 @@ function drawNight(){
     gr=g.createRadialGradient(lx,ly,0,lx,ly,far); gr.addColorStop(0,'rgba(0,0,0,.92)'); gr.addColorStop(0.45,'rgba(0,0,0,.8)'); gr.addColorStop(1,'rgba(0,0,0,.6)');
     g.fillStyle=gr; g.beginPath(); g.moveTo(lx,ly); g.arc(lx,ly,far,a-BEAM_HALF,a+BEAM_HALF); g.closePath(); g.fill();
     punch(g,lx,ly,62,0.85);}
-  for(i=0;i<berths.length;i++){var be=berths[i];punch(g,be.x+Math.cos(be.h)*40,be.y+Math.sin(be.h)*40,46,0.8);punch(g,be.x,be.y,60,0.4);}
+  for(i=0;i<berths.length;i++){var be=berths[i];punch(g,be.x+Math.cos(be.h)*50,be.y+Math.sin(be.h)*50,46,0.8);punch(g,be.x+Math.cos(be.h)*12,be.y+Math.sin(be.h)*12,52,0.45);}
   for(i=0;i<boats.length;i++){var b=boats[i], T=TYPES[b.type], bx=b.x+Math.cos(b.dh)*T.L/2, by=b.y+Math.sin(b.dh)*T.L/2;
     gr=g.createRadialGradient(bx,by,0,bx,by,125); gr.addColorStop(0,'rgba(0,0,0,.72)'); gr.addColorStop(1,'rgba(0,0,0,0)');
     g.fillStyle=gr; g.beginPath(); g.moveTo(bx,by); g.arc(bx,by,125,b.dh-0.5,b.dh+0.5); g.closePath(); g.fill();
@@ -1078,7 +1082,7 @@ function drawNight(){
   for(k=0;k<Ls.length;k++){ctx.fillStyle='rgba(255,236,160,0.10)';ctx.beginPath();ctx.moveTo(Ls[k][0],Ls[k][1]);ctx.arc(Ls[k][0],Ls[k][1],far,beamAngle(k)-BEAM_HALF,beamAngle(k)+BEAM_HALF);ctx.closePath();ctx.fill();}
   ctx.globalCompositeOperation='source-over';
   for(k=0;k<Ls.length;k++){ctx.fillStyle='rgba(255,240,170,.35)';ctx.beginPath();ctx.arc(Ls[k][0],Ls[k][1],11,0,7);ctx.fill();ctx.fillStyle='#fff6c4';ctx.beginPath();ctx.arc(Ls[k][0],Ls[k][1],5,0,7);ctx.fill();}
-  for(i=0;i<berths.length;i++){be=berths[i];var px=be.x+Math.cos(be.h)*40, py=be.y+Math.sin(be.h)*40, c=CARGO[be.col];   // a lamp in each dock's colour
+  for(i=0;i<berths.length;i++){be=berths[i];var px=be.x+Math.cos(be.h)*53, py=be.y+Math.sin(be.h)*53, c=CARGO[be.col];   // a lamp in each dock's colour
     ctx.globalAlpha=0.35*A0;ctx.fillStyle=c.c;ctx.beginPath();ctx.arc(px,py,13,0,7);ctx.fill();ctx.globalAlpha=A0;
     ctx.fillStyle=c.c;ctx.beginPath();ctx.arc(px,py,6,0,7);ctx.fill();ctx.strokeStyle='rgba(255,255,255,.85)';ctx.lineWidth=1.5;ctx.stroke();}
   for(i=0;i<boats.length;i++){b=boats[i];T=TYPES[b.type];bx=b.x+Math.cos(b.dh)*(T.L/2-3);by=b.y+Math.sin(b.dh)*(T.L/2-3);
@@ -1264,22 +1268,23 @@ function render(){
     if(lab){ctx.font='700 14px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';var lw=ctx.measureText(lab).width+28;ctx.globalAlpha=0.92;ctx.fillStyle='#1d3b4a';rr(ctx,W/2-lw/2,10,lw,30,15);ctx.fill();ctx.globalAlpha=1;uiText(lab,W/2,25.5,14,'#fffaf0','center','700');}
   }
   if(state==='over'&&!review){
-    var ko=Math.min(1,(H-20)/380); ctx.save(); ctx.translate(W/2,H/2); ctx.scale(ko,ko); ctx.translate(-W/2,-H/2);
-    var q=panel(Math.min(520,W-60),380), c2=W/2, two=!!mp.result;
+    var ko=Math.min(1,(H-16)/412); ctx.save(); ctx.translate(W/2,H/2); ctx.scale(ko,ko); ctx.translate(-W/2,-H/2);
+    var q=panel(Math.min(520,W-60),412), c2=W/2, two=!!mp.result;
     var head=mp.result==='win'?'You win!':mp.result==='left'?'Opponent left':'Collision!';
     text(head,c2,q.y+58,50,mp.result==='win'?'#1d5a73':'#a83a1b','center');
     uiText('Cargo landed',c2-90,q.y+122,17,'#6b5a3c','center','500'); uiText(String(score),c2-90,q.y+160,44,'#1d3b4a','center','700');
     uiText(two?'Ships sent over':'Ships sent off',c2+90,q.y+122,17,'#6b5a3c','center','500'); uiText(String(two?mp.sent:away),c2+90,q.y+160,44,'#1d3b4a','center','700');
-    if(two)uiText(mp.gone&&mp.result!=='left'?'The other player has left':mp.theirAgain?'The other player wants a rematch!':mp.result==='win'?'Their harbour had a collision':mp.result==='left'?'The other player has gone':'Your opponent wins this one',c2,q.y+212,18,mp.theirAgain&&!mp.gone?'#1d5a73':'#6b5a3c','center','600');
-    else uiText(score>=best&&score>0?'A new best!':'Best: '+best,c2,q.y+212,18,score>=best&&score>0?'#a83a1b':'#6b5a3c','center','600');
-    button(two?(mp.gone?'New game':'Rematch'):'Play again',c2,q.y+272);
-    ctx.fillStyle='#efe6cd'; rr(ctx,c2-75,q.y+318,150,36,18); ctx.fill(); ctx.strokeStyle='#c9b383'; ctx.lineWidth=2; ctx.stroke();
-    uiText('Menu',c2,q.y+336,15,'#6b5a3c','center','600');
+    if(two)uiText(mp.gone&&mp.result!=='left'?'The other player has left':mp.theirAgain?'The other player wants a rematch!':mp.result==='win'?'Their harbour had a collision':mp.result==='left'?'The other player has gone':'Your opponent wins this one',c2,q.y+244,16,mp.theirAgain&&!mp.gone?'#1d5a73':'#6b5a3c','center','600');
+    if(two){uiText('You',c2-70,q.y+209,17,'#6b5a3c','right','600');uiText((mp.wins||0)+'  \u2013  '+(mp.losses||0),c2,q.y+208,30,'#1d3b4a','center','800');uiText('Them',c2+70,q.y+209,17,'#6b5a3c','left','600');}
+    else uiText(score>=best&&score>0?'A new best!':'Best: '+best,c2,q.y+226,18,score>=best&&score>0?'#a83a1b':'#6b5a3c','center','600');
+    button(two?(mp.gone?'New game':'Rematch'):'Play again',c2,q.y+304);
+    ctx.fillStyle='#efe6cd'; rr(ctx,c2-75,q.y+350,150,36,18); ctx.fill(); ctx.strokeStyle='#c9b383'; ctx.lineWidth=2; ctx.stroke();
+    uiText('Menu',c2,q.y+368,15,'#6b5a3c','center','600');
     // a cross to put the scores away and look at the harbours
     var pw2=Math.min(520,W-60), xx=q.x+pw2-34, xy=q.y+34;
     ctx.fillStyle='#efe6cd'; ctx.beginPath(); ctx.arc(xx,xy,19,0,7); ctx.fill(); ctx.strokeStyle='#c9b383'; ctx.lineWidth=2; ctx.stroke();
     ctx.strokeStyle='#6b5a3c'; ctx.lineWidth=3; ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(xx-7,xy-7); ctx.lineTo(xx+7,xy+7); ctx.moveTo(xx+7,xy-7); ctx.lineTo(xx-7,xy+7); ctx.stroke();
-    chips=[{x:c2-110,y:q.y+241,w:220,h:60,act:'again'},{x:c2-75,y:q.y+314,w:150,h:44,act:'menu'},{x:xx-26,y:xy-26,w:52,h:52,act:'close'}];
+    chips=[{x:c2-110,y:q.y+273,w:220,h:60,act:'again'},{x:c2-75,y:q.y+346,w:150,h:44,act:'menu'},{x:xx-26,y:xy-26,w:52,h:52,act:'close'}];
     ctx.restore(); fitChips(ko);
   }
   if(state==='lobby'){
@@ -1292,6 +1297,7 @@ function render(){
       uiText('One player hosts and gets a code; the other joins with it.',c3,ly0+104,16,'#6b5a3c','center','500');
       uiText('Each of you gets one moon button per game:',c3,ly0+130,15,'#6b5a3c','center','500');
       uiText('tap it to send 20 seconds of night to the other harbour.',c3,ly0+150,15,'#6b5a3c','center','500');
+      if(record.w+record.l>0)uiText('On this phone so far: '+record.w+' won, '+record.l+' lost',c3,ly0+248,14,'#8a7a5c','center','600');
       button('Host a game',c3-122,ly0+206); chips.push({x:c3-232,y:ly0+175,w:220,h:60,act:'host'});
       button('Join a game',c3+122,ly0+206,true); chips.push({x:c3+12,y:ly0+175,w:220,h:60,act:'join'});
       smallBtn('Back',c3,ly0+282,'cancel');
@@ -1324,7 +1330,8 @@ function render(){
       smallBtn('Cancel',c3,ly0+262,'cancel');
     }else{
       text('Rematch',c3,ly0+56,46,'#1d3b4a','center');
-      uiText('Waiting for the other player to tap Rematch'+dots,c3,ly0+140,18,'#1d3b4a','center','600');
+      uiText('Waiting for the other player to tap Rematch'+dots,c3,ly0+126,18,'#1d3b4a','center','600');
+      uiText('You  '+(mp.wins||0)+'  \u2013  '+(mp.losses||0)+'  Them',c3,ly0+176,22,'#1d3b4a','center','800');
       smallBtn('Menu',c3,ly0+262,'cancel');
     }
     ctx.restore(); fitChips(kl);
