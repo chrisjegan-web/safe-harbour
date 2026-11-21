@@ -341,7 +341,11 @@ function paintBackground(){
 var AC=null, master=null, musicBus=null, ambBus=null, musicTimer=null, nextNote=0, stepIdx=0, noiseBuf=null, loopBuf=null, nextGull=0;
 function midi(n){return 440*Math.pow(2,(n-69)/12);}
 function audioInit(){
-  if(AC){if(AC.state==='suspended'){try{AC.resume();}catch(e){}}return;}
+  // iPhone: by default web-generated sound counts as 'ambient' and is silenced by the phone's Silent mode.
+  // Declaring it 'playback' (as a music or video page would be) lets it play regardless.
+  try{if(navigator.audioSession&&navigator.audioSession.type!=='playback')navigator.audioSession.type='playback';}catch(e){}
+  // resume from any non-running state: iOS also uses 'interrupted' (after a call, or switching apps), not just 'suspended'
+  if(AC){if(AC.state!=='running'){try{var rp=AC.resume();if(rp&&rp.catch)rp.catch(function(){});}catch(e){}}return;}
   try{
     var A=window.AudioContext||window.webkitAudioContext; if(!A)return;
     AC=new A(); master=AC.createGain(); master.connect(AC.destination);
@@ -920,10 +924,13 @@ function up(e){
 cv.addEventListener('pointerdown',down);
 cv.addEventListener('pointermove',move);
 cv.addEventListener('pointerup',up);
+// extra chances to start or wake the sound: iOS only allows it from inside a touch
+document.addEventListener('touchend',audioInit,{passive:true});
+document.addEventListener('click',audioInit);
 cv.addEventListener('pointercancel',function(e){delete draws[e.pointerId];});
 cv.addEventListener('contextmenu',function(e){e.preventDefault();});
 document.addEventListener('touchmove',function(e){e.preventDefault();},{passive:false});
-document.addEventListener('visibilitychange',function(){if(document.hidden&&state==='play'&&mp.st!=='play')paused=true;});
+document.addEventListener('visibilitychange',function(){if(document.hidden&&state==='play'&&mp.st!=='play')paused=true;if(!document.hidden&&AC)audioInit();});
 window.addEventListener('resize',resize);
 
 /* ---------- drawing ---------- */
@@ -1023,20 +1030,23 @@ function drawNight(){
     ctx.fillStyle='rgba(255,246,200,.4)';ctx.beginPath();ctx.arc(bx,by,6.5,0,7);ctx.fill();ctx.fillStyle='#fffbe6';ctx.beginPath();ctx.arc(bx,by,2.8,0,7);ctx.fill();}
 }
 function drawSettings(){
-  var k=Math.min(1,(H-16)/330), i; ctx.save(); ctx.translate(W/2,H/2); ctx.scale(k,k); ctx.translate(-W/2,-H/2);
-  var p=panel(Math.min(470,W-40),330), cx=W/2, y=p.y, rows=[['Music','music'],['Sea sounds (waves, gulls)','amb'],['All sound','all']];
+  var k=Math.min(1,(H-16)/340), i; ctx.save(); ctx.translate(W/2,H/2); ctx.scale(k,k); ctx.translate(-W/2,-H/2);
+  var p=panel(Math.min(470,W-40),340), cx=W/2, y=p.y, rows=[['Music','music'],['Sea sounds (waves, gulls)','amb'],['All sound','all']];
   text('Settings',cx,y+50,38,'#1d3b4a','center'); schips=[];
   for(i=0;i<rows.length;i++){
-    var ry=y+110+i*50, on=opts[rows[i][1]], sx=cx+128;
+    var ry=y+102+i*46, on=opts[rows[i][1]], sx=cx+128;
     ctx.globalAlpha=(i<2&&!opts.all)?0.4:1;
     uiText(rows[i][0],cx-195,ry,19,'#1d3b4a','left','600');
     ctx.fillStyle=on?'#2a9d6f':'#c9c2b0'; rr(ctx,sx,ry-16,62,32,16); ctx.fill();
     ctx.fillStyle='#ffffff'; ctx.beginPath(); ctx.arc(on?sx+46:sx+16,ry,12,0,7); ctx.fill();
     uiText(on?'On':'Off',sx-12,ry,14,'#6b5a3c','right','600');
     ctx.globalAlpha=1;
-    schips.push({x:cx-205,y:ry-25,w:410,h:50,act:rows[i][1]});
+    schips.push({x:cx-205,y:ry-23,w:410,h:46,act:rows[i][1]});
   }
-  button('Done',cx,y+282); schips.push({x:cx-110,y:y+251,w:220,h:60,act:'done'});
+  // what the phone's sound system reports, to help when a phone is silent
+  var st=!AC?'not started yet \u2013 tap anywhere':AC.state==='running'?'running':AC.state==='suspended'?'waiting for a tap':AC.state;
+  uiText('Sound system: '+st,cx,y+244,13,AC&&AC.state==='running'?'#5d7a5d':'#a83a1b','center','600');
+  button('Done',cx,y+290); schips.push({x:cx-110,y:y+259,w:220,h:60,act:'done'});
   ctx.restore(); fitChips(k,schips);
 }
 function gearIcon(x,y){
