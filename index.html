@@ -489,7 +489,7 @@ function applyOpts(){
 
 /* ---------- game ---------- */
 function newGame(){
-  review=false; viewOpp=false; mp.snap=null; hazards=[]; hazT=D.hazFirst+Math.random()*15; nightT=0; dk=night?1:0; banner=null; mp.used={night:false,monster:false,ship:false}; monsters=[]; surf=[];
+  review=false; viewOpp=false; mp.snap=null; hazards=[]; hazT=D.hazFirst+Math.random()*15; nightT=0; dk=night?1:0; banner=null; mp.used={night:false,monster:false,ship:false}; mp.cool=0; monsters=[]; surf=[];
   for(var bz=0;bz<berths.length;bz++)berths[bz].monster=null;
   boats=[];floats=[];blasts=[];pend=[];draws={};score=0;away=0;time=0;spawnT=1;paused=false;
   for(var i=0;i<berths.length;i++)berths[i].occupant=null;
@@ -799,6 +799,7 @@ function update(dt){
   for(i=boats.length-1;i>=0;i--)if(boats[i].gone){for(var k in draws)if(draws[k]===boats[i])delete draws[k];boats.splice(i,1);}
   for(i=0;i<boats.length;i++)boats[i].warn=false;
   if(nightT>0)nightT-=dt;
+  if(mp.cool>0)mp.cool-=dt;
   var dkT=(night||nightT>0)?1:0; dk+=Math.max(-dt/1.5,Math.min(dt/1.5,dkT-dk));     // dusk and dawn take a second and a half
   if(dk>0)updateLights(dt);
   if(banner){banner.t+=dt;if(banner.t>3)banner=null;}
@@ -968,9 +969,12 @@ function hudButtons(){
   return[['pause',W-40,false],['gear',W-92,false]];
 }
 function hudHit(p){var a=hudButtons();for(var i=0;i<a.length;i++)if(hitBtn(p,a[i][1],32,25))return a[i][0];return null;}
+var COOL=20;   // seconds between uses of the one-use buttons
 function fire(id){
   if(mp.st!=='play'||mp.used[id]||(id==='night'&&night))return;
-  mp.used[id]=true; send({k:id==='night'?'nightfall':id==='monster'?'monster':'surface'});
+  if(mp.cool>0){floats.push({x:W-150,y:80,t:0,text:'Wait '+Math.ceil(mp.cool)+'s',c:'#fff'});return;}
+  // the other buttons are locked for a while after each use
+  mp.used[id]=true; mp.cool=COOL; send({k:id==='night'?'nightfall':id==='monster'?'monster':'surface'});
   floats.push({x:W-150,y:80,t:0,text:id==='night'?'Night sent!':id==='monster'?'Monster sent!':'Ship sent!',c:'#fff'}); sfx('snap');
 }
 function nearestBerth(p,b){
@@ -1232,10 +1236,10 @@ function drawHUD(){
   else{uiText('Best',112,32,14,'#6b5a3c'); uiText(String(Math.max(best,score)),146,32,19,'#1d3b4a','left','700');}
   var hb=hudButtons(), bi, bx, id, pu=0.5+0.5*Math.sin(clock*3);
   for(bi=0;bi<hb.length;bi++){id=hb[bi][0];bx=hb[bi][1];
-    var weapon=id==='night'||id==='monster'||id==='ship', spent=hb[bi][2];
-    ctx.globalAlpha=spent?0.3:1;
+    var weapon=id==='night'||id==='monster'||id==='ship', spent=hb[bi][2], cooling=weapon&&!spent&&mp.cool>0;
+    ctx.globalAlpha=spent?0.3:cooling?0.55:1;
     ctx.fillStyle=weapon?'#16233f':'rgba(255,252,240,.92)'; ctx.beginPath(); ctx.arc(bx,32,20,0,7); ctx.fill();
-    ctx.strokeStyle=weapon?'rgba(255,246,196,'+(spent?0.4:0.5+0.5*pu).toFixed(2)+')':'rgba(90,70,40,.35)'; ctx.lineWidth=weapon?2.5:1.5; ctx.stroke();
+    ctx.strokeStyle=weapon?'rgba(255,246,196,'+(spent||cooling?0.4:0.5+0.5*pu).toFixed(2)+')':'rgba(90,70,40,.35)'; ctx.lineWidth=weapon?2.5:1.5; ctx.stroke();
     if(id==='gear')gearIcon(bx,32);
     else if(id==='pause'){ctx.fillStyle='#1d3b4a';
       if(paused){ctx.beginPath();ctx.moveTo(bx-6,23);ctx.lineTo(bx+9,32);ctx.lineTo(bx-6,41);ctx.closePath();ctx.fill();}
@@ -1251,6 +1255,10 @@ function drawHUD(){
       ctx.fillStyle='#fff6c4';ctx.beginPath();ctx.moveTo(bx+10,35);ctx.quadraticCurveTo(bx+5,30,bx,30);ctx.lineTo(bx-9,30);ctx.lineTo(bx-9,40);ctx.lineTo(bx,40);ctx.quadraticCurveTo(bx+5,40,bx+10,35);ctx.fill();
       ctx.strokeStyle='#fff6c4';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(bx-5,23,2.6,0,7);ctx.stroke();ctx.beginPath();ctx.arc(bx+3,20.5,1.9,0,7);ctx.stroke();ctx.beginPath();ctx.arc(bx+6,25.5,1.5,0,7);ctx.stroke();}
     ctx.globalAlpha=1;
+    if(cooling){            // a ring that empties as the wait runs down, with the seconds left
+      ctx.strokeStyle='#fff6c4'; ctx.lineWidth=3.5; ctx.lineCap='butt'; ctx.beginPath(); ctx.arc(bx,32,20,-Math.PI/2,-Math.PI/2+Math.PI*2*(mp.cool/COOL)); ctx.stroke();
+      ctx.fillStyle='rgba(22,35,63,.72)'; ctx.beginPath(); ctx.arc(bx,32,12,0,7); ctx.fill();
+      uiText(String(Math.ceil(mp.cool)),bx,32.5,14,'#fff6c4','center','800');}
   }
   ctx.strokeStyle='rgba(90,70,40,.35)';
 }
@@ -1314,7 +1322,15 @@ function render(){
     for(i=0;i<pend.length;i++){var pe=pend[i], pu=1+0.18*Math.sin(clock*11);
       ctx.save(); ctx.translate(Math.max(20,Math.min(W-20,pe.x)),Math.max(20,Math.min(H-20,pe.y))); ctx.rotate(pe.h); ctx.scale(pu,pu);
       ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(-2,-13); ctx.lineTo(-2,-5); ctx.lineTo(-14,-5); ctx.lineTo(-14,5); ctx.lineTo(-2,5); ctx.lineTo(-2,13); ctx.closePath();
-      ctx.fillStyle=pe.opp?'#ff5a3c':'#ffd23f'; ctx.fill(); ctx.strokeStyle='#1d3b4a'; ctx.lineWidth=2.5; ctx.lineJoin='round'; ctx.stroke(); ctx.restore();}
+      // the arrow takes the colour of the ship's cargo (the tail shows a second colour on a mixed load).
+      // In the dark it stays plain, so it doesn't give the cargo away.  Ships sent by the other player get a white edge.
+      var ac=[], ai; for(ai=0;ai<pe.cargo.length;ai++)if(pe.cargo[ai]!==null&&ac.indexOf(pe.cargo[ai])<0)ac.push(pe.cargo[ai]);
+      var plain=dk>0.5||!ac.length;
+      ctx.lineJoin='round';
+      if(pe.opp){ctx.strokeStyle='#ffffff';ctx.lineWidth=7;ctx.stroke();}
+      ctx.fillStyle=plain?'#d5dbe2':CARGO[ac[0]].c; ctx.fill();
+      if(!plain&&ac.length>1){ctx.fillStyle=CARGO[ac[1]].c;ctx.fillRect(-14,-5,7,10);}
+      ctx.strokeStyle='#10202a'; ctx.lineWidth=2.5; ctx.stroke(); ctx.restore();}
     drawHUD();
     if(nightT>0){ctx.fillStyle='rgba(22,35,63,.9)';rr(ctx,14,58,104,26,13);ctx.fill();uiText('Night  '+Math.ceil(nightT)+'s',66,71.5,13,'#fff6c4','center','700');}
     if(banner){var ba=Math.min(1,banner.t/0.3)*Math.min(1,(3-banner.t)/0.8);ctx.globalAlpha=Math.max(0,ba);ctx.font='600 40px Georgia,"Palatino Linotype",Palatino,serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineJoin='round';ctx.lineWidth=7;ctx.strokeStyle='rgba(8,30,48,.85)';ctx.strokeText(banner.text,W/2,H*0.3);ctx.fillStyle='#fff6c4';ctx.fillText(banner.text,W/2,H*0.3);ctx.globalAlpha=1;}
