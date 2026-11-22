@@ -55,15 +55,28 @@ var dk=0, nightT=0, banner=null;      // dk: how dark it is right now (0 day .. 
 var hazards=[], hazT=45;            // whirlpools and waterspouts
 var review=false, viewOpp=false;   // after a game: stats panel closed, looking at the harbours
 var draws={};            // pointerId -> boat being steered
-var opts={music:true,amb:true,all:true};   // sound settings
+var opts={music:true,amb:true,all:true,unlock:false};   // sound settings; unlock: every map open for solo play
+var total=0, newMaps=[], menuHint=null, ff=false;     // total: all cargo ever landed on this phone (opens maps); ff: fast-forward (solo)
+// pirates (on maps that have them): they chase loaded ships and lift crates; the cannon sinks them
+var PIR=[{first:50,gap:42,max:1,steal:3.4,limit:6},{first:32,gap:32,max:2,steal:2.7,limit:5},{first:22,gap:24,max:3,steal:2.1,limit:4}];
+var pirates=[], balls=[], pirT=40, stolen=0, sunk=0, reloadT=0, aims={}, cannonAng=-Math.PI/2, lossKind='', pirateTip=false;
 var night=false, settings=false, schips=[], dark=null;
-function loadBest(){
+function loadBest(){      // best solo score for this map on this difficulty
   best=0;
-  try{best=parseInt(localStorage.getItem('safeharbour.best.'+diff)||(diff===1?localStorage.getItem('safeharbour.best'):'0')||'0',10)||0;}catch(e){}
+  try{best=parseInt(localStorage.getItem('safeharbour.best.'+diff+'.'+mapIdx)||'0',10)||0;}catch(e){}
+}
+function saveBest(){if(score>best){best=score;try{localStorage.setItem('safeharbour.best.'+diff+'.'+mapIdx,String(best));}catch(e){}}}
+function isOpen(i){return opts.unlock||total>=(MAPS[i].unlock||0);}
+function nextUnlock(){var n=null;for(var i=0;i<MAPS.length;i++){var u=MAPS[i].unlock||0;if(u>total&&(n===null||u<n))n=u;}return n;}
+function landed(){     // one more crate ashore: count it towards opening maps
+  var before=total; total++;
+  for(var i=0;i<MAPS.length;i++){var u=MAPS[i].unlock||0;if(u>before&&u<=total&&!opts.unlock){newMaps.push(MAPS[i].name);if(mp.st!=='play')banner={text:'New map: '+MAPS[i].name+'!',t:0};}}
+  if(total%5===0||newMaps.length)try{localStorage.setItem('safeharbour.total',String(total));}catch(e){}
 }
 function setDiff(i){diff=Math.max(0,Math.min(2,i|0));D=DIFF[diff];loadBest();try{localStorage.setItem('safeharbour.diff',String(diff));}catch(e){}}
 try{var dv=localStorage.getItem('safeharbour.diff');if(dv!==null){diff=Math.max(0,Math.min(2,parseInt(dv,10)||0));D=DIFF[diff];}}catch(e){}
 loadBest();
+try{total=parseInt(localStorage.getItem('safeharbour.total')||'0',10)||0;opts.unlock=localStorage.getItem('safeharbour.unlock')==='on';}catch(e){}
 try{opts.all=localStorage.getItem('safeharbour.sound')!=='off';opts.music=localStorage.getItem('safeharbour.music')!=='off';opts.amb=localStorage.getItem('safeharbour.amb')!=='off';night=localStorage.getItem('safeharbour.night')==='on';}catch(e){}
 try{var mi=localStorage.getItem('safeharbour.map');if(mi!==null)mapIdx=Math.max(0,parseInt(mi,10)||0);}catch(e){}
 
@@ -157,7 +170,7 @@ MAPS.push({name:'Lighthouse Isle',send:'R',recv:'L',
 function bump(x,c,w){var d=(x-c)/w;return Math.exp(-d*d);}
 function nTop(x){return 80+45*bump(x,0.35*W,0.11*W)+4*Math.sin(x/37);}
 function nBot(x){return H-80-45*bump(x,0.65*W,0.11*W)+4*Math.sin(x/41+1);}
-MAPS.push({name:'The Narrows',pace:1.6,send:'R',recv:'L',
+MAPS.push({name:'The Narrows',unlock:200,pace:1.6,send:'R',recv:'L',
   land:function(x,y,i){return y<nTop(x)-i||y>nBot(x)+i;},
   docks:function(){
     var T=[[0.35,0],[0.58,1],[0.8,2]], B=[[0.18,1],[0.42,2],[0.88,0]], o=[], k, x;
@@ -185,7 +198,7 @@ MAPS.push({name:'The Narrows',pace:1.6,send:'R',recv:'L',
 
 /* --- Crescent Bay: one sheltered bay, every ship comes and goes through the mouth at the bottom --- */
 function bay(){return {x:W/2,y:H+20,rx:W/2-70,ry:H-70};}
-MAPS.push({name:'Crescent Bay',pace:1.3,send:'B',recv:'B',
+MAPS.push({name:'Crescent Bay',unlock:50,pace:1.3,send:'B',recv:'B',
   land:function(x,y,i){var b=bay(),dx=(x-b.x)/(b.rx-i),dy=(y-b.y)/(b.ry-i);return dx*dx+dy*dy>1;},
   docks:function(){
     var b=bay(), A=[[-160,0],[-128,1],[-101,2],[-79,0],[-52,1],[-20,2]], o=[], k;
@@ -210,7 +223,7 @@ MAPS.push({name:'Crescent Bay',pace:1.3,send:'B',recv:'B',
 /* --- Twin Isles: open sea, two islands, traffic from every side --- */
 function isles(){return[{x:0.27*W,y:Math.round(0.42*H),rx:72,ry:54,p:0.5},{x:0.72*W,y:Math.round(0.6*H),rx:72,ry:54,p:2.1}];}
 function isleF2(a,p){return 1+0.06*Math.sin(3*a+p)+0.04*Math.sin(5*a+p*2);}
-MAPS.push({name:'Twin Isles',pace:1.45,send:'R',recv:'L',
+MAPS.push({name:'Twin Isles',unlock:140,pace:1.45,send:'R',recv:'L',
   land:function(x,y,i){
     var I=isles();
     for(var k=0;k<I.length;k++){var dx=x-I[k].x,dy=y-I[k].y,f=isleF2(Math.atan2(dy,dx),I[k].p),rx=I[k].rx*f-i,ry=I[k].ry*f-i;
@@ -244,7 +257,7 @@ MAPS.push({name:'Twin Isles',pace:1.45,send:'R',recv:'L',
 /* --- Lone Isle: a single island in the middle of open sea, docks all the way round --- */
 function lone(){return {x:W/2,y:Math.round(H/2)+6,rx:108,ry:50};}
 function loneF(a){return 1+0.03*Math.sin(4*a+0.7);}
-MAPS.push({name:'Lone Isle',pace:1.25,send:'R',recv:'L',
+MAPS.push({name:'Lone Isle',unlock:90,pace:1.25,send:'R',recv:'L',
   land:function(x,y,i){var I=lone(),dx=x-I.x,dy=y-I.y,f=loneF(Math.atan2(dy,dx)),rx=I.rx*f-i,ry=I.ry*f-i;
     return rx>0&&ry>0&&dx*dx/(rx*rx)+dy*dy/(ry*ry)<1;},
   docks:function(){
@@ -266,6 +279,41 @@ MAPS.push({name:'Lone Isle',pace:1.25,send:'R',recv:'L',
   extras:function(g,R){var I=lone();beacon(g,I.x,I.y);},
   clear:function(){var I=lone();return[[I.x,I.y]];},
   lights:function(){var I=lone();return[[I.x,I.y]];}
+});
+/* --- Pirate Cove: a southern shore with a fort and cannon, an islet offshore, and pirates --- */
+function pcY(x){return H-74-34*bump(x,0.5*W,0.085*W)+4*Math.sin(x/39+2);}
+function pcIsle(){return {x:0.5*W,y:Math.round(H*0.3),rx:66,ry:44,p:1.3};}
+MAPS.push({name:'Pirate Cove',unlock:20,pace:1.3,pirates:true,send:'R',recv:'L',
+  land:function(x,y,i){
+    if(y>pcY(x)+i)return true;
+    var I=pcIsle(),dx=x-I.x,dy=y-I.y,f=isleF2(Math.atan2(dy,dx),I.p),rx=I.rx*f-i,ry=I.ry*f-i;
+    return rx>0&&ry>0&&dx*dx/(rx*rx)+dy*dy/(ry*ry)<1;},
+  docks:function(){
+    var I=pcIsle(), P=Math.PI, o=[], xs=[[0.16*W,0],[0.16*W+66,1],[0.84*W-66,2],[0.84*W,0]], k;
+    for(k=0;k<xs.length;k++)o.push({x:xs[k][0],y:pcY(xs[k][0])-46,h:P/2,col:xs[k][1],wh:0});
+    o.push({x:I.x-I.rx*isleF2(P,I.p)-46,y:I.y,h:0,col:1,wh:0});
+    o.push({x:I.x+I.rx*isleF2(0,I.p)+46,y:I.y,h:P,col:2,wh:0});
+    return o;},
+  spawns:function(){return[{e:'L',a:60,b:H-160},{e:'R',a:60,b:H-160},{e:'T',a:215,b:0.5*W-150},{e:'T',a:0.5*W+150,b:W-150}];},
+  outline:function(g,o,wob){
+    var x, a, I=pcIsle(); g.beginPath();
+    g.moveTo(-6,H+6);for(x=-6;x<=W+6;x+=6)g.lineTo(x,pcY(x)-o-(wob?4*Math.sin(x/23+o):0));g.lineTo(W+6,H+6);g.closePath();
+    for(a=0;a<6.3;a+=0.06){var f=isleF2(a,I.p),w=wob?3*Math.sin(a*7+o):0,px=I.x+Math.cos(a)*(I.rx*f+o+w),py=I.y+Math.sin(a)*(I.ry*f+o+w);if(a===0)g.moveTo(px,py);else g.lineTo(px,py);}
+    g.closePath();
+  },
+  cannon:function(){var x=0.5*W;return{x:x,y:pcY(x)+24};},
+  extras:function(g,R){
+    var I=pcIsle(), c=this.cannon(), k;
+    beacon(g,I.x,I.y);
+    // the fort: a ring of stone around the gun
+    g.fillStyle='rgba(40,50,40,.25)'; g.beginPath(); g.arc(c.x+3,c.y+4,34,0,7); g.fill();
+    g.fillStyle='#bdb3a2'; g.beginPath(); g.arc(c.x,c.y,34,0,7); g.fill();
+    g.fillStyle='#d8cfbf'; g.beginPath(); g.arc(c.x,c.y,26,0,7); g.fill();
+    g.strokeStyle='rgba(110,98,80,.55)'; g.lineWidth=1.2;
+    for(k=0;k<12;k++){var a=k*Math.PI/6;g.beginPath();g.moveTo(c.x+Math.cos(a)*26,c.y+Math.sin(a)*26);g.lineTo(c.x+Math.cos(a)*34,c.y+Math.sin(a)*34);g.stroke();}
+  },
+  clear:function(){var I=pcIsle(),c=this.cannon();return[[I.x,I.y],[c.x,c.y],[c.x-30,c.y+10],[c.x+30,c.y+10]];},
+  lights:function(){var I=pcIsle();return[[I.x,I.y]];}
 });
 function beacon(g,lx,ly){
   g.fillStyle='rgba(255,236,150,.25)'; g.beginPath(); g.arc(lx,ly,26,0,7); g.fill();
@@ -289,7 +337,7 @@ function buildMap(){
     if(b.targetIdx>=0&&b.path.length){var t=berths[b.targetIdx];b.path[b.path.length-1]={x:t.x,y:t.y};}
   }
 }
-function setMap(i){mapIdx=i;boats=[];try{localStorage.setItem('safeharbour.map',String(i));}catch(e){}buildMap();paintBackground();}
+function setMap(i){mapIdx=i;boats=[];try{localStorage.setItem('safeharbour.map',String(i));}catch(e){}loadBest();buildMap();paintBackground();}
 function resize(){
   vw=window.innerWidth||800; vh=window.innerHeight||600;
   dpr=Math.min(window.devicePixelRatio||1,2.5);
@@ -484,13 +532,14 @@ function sfx(kind){
 }
 function applyOpts(){
   if(master){master.gain.value=opts.all?1:0;musicBus.gain.value=opts.music?1:0;ambBus.gain.value=opts.amb?1:0;}
-  try{localStorage.setItem('safeharbour.sound',opts.all?'on':'off');localStorage.setItem('safeharbour.music',opts.music?'on':'off');localStorage.setItem('safeharbour.amb',opts.amb?'on':'off');localStorage.setItem('safeharbour.night',night?'on':'off');}catch(e){}
+  try{localStorage.setItem('safeharbour.sound',opts.all?'on':'off');localStorage.setItem('safeharbour.music',opts.music?'on':'off');localStorage.setItem('safeharbour.amb',opts.amb?'on':'off');localStorage.setItem('safeharbour.night',night?'on':'off');localStorage.setItem('safeharbour.unlock',opts.unlock?'on':'off');}catch(e){}
 }
 
 /* ---------- game ---------- */
 function newGame(){
   review=false; viewOpp=false; mp.snap=null; hazards=[]; hazT=D.hazFirst+Math.random()*15; nightT=0; dk=night?1:0; banner=null; mp.used={night:false,monster:false,ship:false}; mp.cool=0; monsters=[]; surf=[];
   for(var bz=0;bz<berths.length;bz++)berths[bz].monster=null;
+  lossAt=null; pirates=[]; balls=[]; pirT=PIR[diff].first; stolen=0; sunk=0; reloadT=0; aims={}; lossKind=''; newMaps=[]; ff=false;
   boats=[];floats=[];blasts=[];pend=[];draws={};score=0;away=0;time=0;spawnT=1;paused=false;
   for(var i=0;i<berths.length;i++)berths[i].occupant=null;
   state='play';
@@ -672,6 +721,84 @@ function drawSpout(hz){
   for(i=0;i<3;i++){var a2=-clock*5+i*2.1;ctx.beginPath();ctx.arc(-10+sw,-23,8+i*5.5,a2,a2+2.4);ctx.stroke();}
   ctx.restore();
 }
+function spawnPirate(){
+  var sg=map.spawns(), e=sg[(Math.random()*sg.length)|0], st=edgePoint(e.e,e.a+Math.random()*(e.b-e.a));
+  pirates.push({x:st.x-Math.cos(st.h)*10,y:st.y-Math.sin(st.h)*10,h:st.h,warn:2.4,inside:false,tgt:null,latch:0,ph:Math.random()*6.28});
+  if(!pirateTip){pirateTip=true;banner={text:'Pirates! Drag from the cannon to fire',t:0};}
+  hornSound(73,0.5,0.14); setTimeout(function(){if(state==='play')hornSound(62,0.8,0.14);},420);
+}
+function updatePirates(dt){
+  var P=PIR[diff], i, j, k;
+  pirT-=dt; if(pirT<=0){if(pirates.length<P.max)spawnPirate();pirT=P.gap*(0.8+Math.random()*0.4);}
+  if(reloadT>0)reloadT-=dt;
+  for(i=0;i<pirates.length;i++){var p=pirates[i];
+    if(p.warn>0){p.warn-=dt;continue;}                       // its arrow is still showing at the edge
+    // pick the nearest loaded ship that is under way; ships in dock are safe
+    if(p.tgt&&(boats.indexOf(p.tgt)<0||p.tgt.state!=='sail'||cargoCount(p.tgt)===0||!onScreen(p.tgt))){p.tgt=null;p.latch=0;}
+    if(!p.tgt){var bd=1e9;for(j=0;j<boats.length;j++){var b=boats[j];if(b.state!=='sail'||b.entering||cargoCount(b)===0||!onScreen(b))continue;
+      var dd=Math.hypot(b.x-p.x,b.y-p.y);if(dd<bd){bd=dd;p.tgt=b;}}}
+    var tx, ty;
+    if(p.tgt){tx=p.tgt.x;ty=p.tgt.y;}else{tx=W/2+Math.cos(clock*0.25+p.ph)*W*0.28;ty=H*0.42+Math.sin(clock*0.25+p.ph)*H*0.22;}   // nothing to rob: prowl
+    var d=Math.hypot(tx-p.x,ty-p.y), want=Math.atan2(ty-p.y,tx-p.x), df=Math.atan2(Math.sin(want-p.h),Math.cos(want-p.h));
+    p.h+=Math.max(-2.2*dt,Math.min(2.2*dt,df));
+    var sp=(p.tgt&&d<30)?Math.min(31,p.tgt.speed*0.9):31, offs=[0,0.5,-0.5,1,-1,1.6,-1.6,2.4,-2.4];
+    for(k=0;k<offs.length;k++){var a=p.h+offs[k], nx=p.x+Math.cos(a)*sp*dt, ny=p.y+Math.sin(a)*sp*dt;
+      if(p.inside&&map.land(nx,ny,-10))continue;               // steer round land
+      p.x=nx;p.y=ny;if(k)p.h+=offs[k]*Math.min(1,dt*3);break;}
+    if(!p.inside&&p.x>24&&p.x<W-24&&p.y>24&&p.y<H-24)p.inside=true;
+    // alongside its prey it lifts one crate at a time
+    if(p.tgt&&d<38){p.latch+=dt;
+      if(p.latch>=P.steal){p.latch=0;
+        for(k=0;k<p.tgt.cargo.length;k++)if(p.tgt.cargo[k]!==null){p.tgt.cargo[k]=null;break;}
+        stolen++; floats.push({x:p.tgt.x,y:p.tgt.y-22,t:0,text:'Stolen!',c:'#fff'}); sfx('gurgle');
+        if(stolen>=P.limit){lossKind='plunder';gameLost(p.tgt.x,p.tgt.y);return;}
+      }
+    }else if(p.latch>0)p.latch=Math.max(0,p.latch-dt*2);
+  }
+  for(i=balls.length-1;i>=0;i--){var c=balls[i]; c.x+=c.vx*dt; c.y+=c.vy*dt; c.t+=dt;
+    if(c.t>4||c.x<-40||c.x>W+40||c.y<-40||c.y>H+40){balls.splice(i,1);continue;}
+    for(j=pirates.length-1;j>=0;j--){var q=pirates[j];if(q.warn>0)continue;
+      if(Math.hypot(q.x-c.x,q.y-c.y)<26){pirates.splice(j,1);balls.splice(i,1);sunk++;blasts.push({x:q.x,y:q.y,t:0,small:true});
+        floats.push({x:q.x,y:q.y-24,t:0,text:'Sunk!',c:'#fff'});sfx('crash');break;}}
+  }
+}
+function fireCannon(tx,ty){
+  var c=map.cannon(), a=Math.atan2(ty-c.y,tx-c.x);
+  cannonAng=a; if(reloadT>0)return;
+  balls.push({x:c.x+Math.cos(a)*30,y:c.y+Math.sin(a)*30,vx:Math.cos(a)*300,vy:Math.sin(a)*300,t:0}); reloadT=1.1;
+  if(AC&&AC.state==='running'){var t=AC.currentTime,n=AC.createBufferSource(),fl=AC.createBiquadFilter(),g=AC.createGain();n.buffer=noiseBuf;fl.type='lowpass';fl.frequency.value=700;g.gain.value=0.5;n.connect(fl);fl.connect(g);g.connect(master);n.start(t);tone(120,t,0.35,'sine',0.3,45);}
+}
+function drawPirate(p){
+  if(p.warn>0){   // a black arrow at the edge before it sails in
+    var pu=1+0.18*Math.sin(clock*11);
+    ctx.save(); ctx.translate(Math.max(20,Math.min(W-20,p.x)),Math.max(20,Math.min(H-20,p.y))); ctx.rotate(p.h); ctx.scale(pu,pu);
+    ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(-2,-13); ctx.lineTo(-2,-5); ctx.lineTo(-14,-5); ctx.lineTo(-14,5); ctx.lineTo(-2,5); ctx.lineTo(-2,13); ctx.closePath();
+    ctx.lineJoin='round'; ctx.strokeStyle='#ffffff'; ctx.lineWidth=6; ctx.stroke(); ctx.fillStyle='#15151b'; ctx.fill(); ctx.restore(); return;}
+  var L=50, w=22;
+  if(p.tgt&&Math.hypot(p.tgt.x-p.x,p.tgt.y-p.y)<38){      // grappled: a red line and a ring that fills as the crate is taken
+    ctx.strokeStyle='rgba(255,60,50,.9)'; ctx.lineWidth=2.5; ctx.setLineDash([5,4]); ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.tgt.x,p.tgt.y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.lineWidth=4; ctx.beginPath(); ctx.arc(p.tgt.x,p.tgt.y,TYPES[p.tgt.type].L/2+12,-Math.PI/2,-Math.PI/2+Math.PI*2*(p.latch/PIR[diff].steal)); ctx.stroke();}
+  ctx.save(); ctx.translate(p.x+2,p.y+3); ctx.rotate(p.h); ctx.fillStyle='rgba(0,20,35,.3)'; hullPath(L,w,0.05); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.h);
+  ctx.fillStyle='#24242b'; hullPath(L,w,0.05); ctx.fill(); ctx.strokeStyle='#c22a2a'; ctx.lineWidth=2; ctx.stroke();
+  ctx.fillStyle='#4a4a55'; hullPath(L*0.8,w*0.6,0.05); ctx.fill();
+  ctx.fillStyle='#0d0d11'; ctx.fillRect(-9,-8,16,16); ctx.strokeStyle='#f2f2f2'; ctx.lineWidth=2.2; ctx.lineCap='round';     // a black flag with a white cross
+  ctx.beginPath(); ctx.moveTo(-5,-4); ctx.lineTo(3,4); ctx.moveTo(3,-4); ctx.lineTo(-5,4); ctx.stroke();
+  ctx.restore();
+}
+function drawCannon(){
+  var c=map.cannon(), id, aiming=null; for(id in aims)aiming=aims[id];
+  if(aiming){var a=Math.atan2(aiming.y-c.y,aiming.x-c.x); cannonAng=a;
+    ctx.strokeStyle='rgba(255,255,255,.85)'; ctx.lineWidth=3; ctx.lineCap='round'; ctx.setLineDash([3,10]);
+    ctx.beginPath(); ctx.moveTo(c.x+Math.cos(a)*30,c.y+Math.sin(a)*30); ctx.lineTo(c.x+Math.cos(a)*1400,c.y+Math.sin(a)*1400); ctx.stroke(); ctx.setLineDash([]);}
+  ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(cannonAng);
+  ctx.fillStyle='#5a4630'; ctx.fillRect(-12,-11,20,22);                       // carriage
+  ctx.fillStyle='#1c1c22'; rr(ctx,-10,-6.5,40,13,5); ctx.fill(); ctx.fillStyle='#3a3a44'; ctx.fillRect(26,-7.5,5,15);   // barrel
+  ctx.restore();
+  if(reloadT>0){ctx.strokeStyle='rgba(255,255,255,.9)';ctx.lineWidth=3;ctx.beginPath();ctx.arc(c.x,c.y,30,-Math.PI/2,-Math.PI/2+Math.PI*2*(1-reloadT/1.1));ctx.stroke();}
+  else if(pirates.length){var pl=0.5+0.5*Math.sin(clock*6);ctx.strokeStyle='rgba(255,236,150,'+(0.4+0.5*pl).toFixed(2)+')';ctx.lineWidth=3;ctx.beginPath();ctx.arc(c.x,c.y,31+2*pl,0,7);ctx.stroke();}
+  for(var i=0;i<balls.length;i++){ctx.fillStyle='rgba(0,0,0,.3)';ctx.beginPath();ctx.arc(balls[i].x+2,balls[i].y+3,5,0,7);ctx.fill();ctx.fillStyle='#15151b';ctx.beginPath();ctx.arc(balls[i].x,balls[i].y,5,0,7);ctx.fill();}
+}
 function beamAngle(i){return clock*1.0+i*Math.PI;}
 var BEAM_HALF=0.17;
 function updateLights(dt){
@@ -685,12 +812,14 @@ function updateLights(dt){
     b.lit=hit?1:Math.max(0,(b.lit||0)-dt/1.1);
   }
 }
-function crash(a,b){
-  var x=(a.x+b.x)/2, y=(a.y+b.y)/2;
-  blasts.push({x:x,y:y,t:0}); sfx('crash');
+function crash(a,b){lossKind='crash';gameLost((a.x+b.x)/2,(a.y+b.y)/2);}
+var lossAt=null;
+function gameLost(x,y){
+  lossAt={x:x,y:y}; blasts.push({x:x,y:y,t:0}); sfx('crash');
   state='crash'; overT=0; draws={};
   if(mp.st==='play'){mp.result='lose';mp.st='done';tally(false);send({k:'lost'});sendSnap();}
-  if(score>best){best=score;try{localStorage.setItem('safeharbour.best.'+diff,String(best));}catch(e){}}
+  if(mp.st==='idle')saveBest();
+  try{localStorage.setItem('safeharbour.total',String(total));}catch(e){}
 }
 function dockAt(b,idx){
   var t=berths[idx], off=TYPES[b.type].L/2-40;     // every ship ties up bow-in against the quay, so short ones sit right inside the walls
@@ -720,7 +849,7 @@ function updateBoat(b,dt){
     var be=berths[b.berthIdx], col=be.col, idx=b.cargo.indexOf(col);
     if(idx>=0&&!be.monster){     // nothing is unloaded while a sea monster has hold of the dock
       b.unloadT+=dt;
-      if(b.unloadT>=1.3){b.unloadT=0;b.cargo[idx]=null;score++;sfx('pop');floats.push({x:b.x,y:b.y-20,t:0,text:'+1',c:CARGO[col].c});}
+      if(b.unloadT>=1.3){b.unloadT=0;b.cargo[idx]=null;score++;landed();sfx('pop');floats.push({x:b.x,y:b.y-20,t:0,text:'+1',c:CARGO[col].c});}
     }
     if(b.slide){b.slide.t=Math.min(1,b.slide.t+dt/0.3);var e=1-(1-b.slide.t)*(1-b.slide.t);b.x=b.slide.x+(b.dockX-b.slide.x)*e;b.y=b.slide.y+(b.dockY-b.slide.y)*e;if(b.slide.t>=1)b.slide=null;}
     var dd=Math.atan2(Math.sin(b.h-b.dh),Math.cos(b.h-b.dh)); b.dh+=dd*Math.min(1,dt*6); return;
@@ -795,6 +924,7 @@ function update(dt){
   if(spawnT<=0){spawn();spawnT=Math.max(D.min,8.8-time*0.016)*D.pace*(map.pace||1)*(0.8+Math.random()*0.4)*(mp.st==='play'?1.7:1);}
   for(i=pend.length-1;i>=0;i--){pend[i].t-=dt;if(pend[i].t<=0){boats.push(makeBoat(pend[i]));pend.splice(i,1);}}
   updateHazards(dt); updateSent(dt);
+  if(map.pirates){updatePirates(dt);if(state!=='play')return;}
   for(i=0;i<boats.length;i++)updateBoat(boats[i],dt);
   for(i=boats.length-1;i>=0;i--)if(boats[i].gone){for(var k in draws)if(draws[k]===boats[i])delete draws[k];boats.splice(i,1);}
   for(i=0;i<boats.length;i++)boats[i].warn=false;
@@ -886,7 +1016,7 @@ function oppGone(){
 }
 function sendSnap(){
   var bs=[]; for(var i=0;i<boats.length;i++){var b=boats[i];bs.push({x:Math.round(b.x),y:Math.round(b.y),h:Math.round(b.dh*100)/100,t:b.type,c:b.cargo,d:b.state==='docked'?b.berthIdx:-1,w:b.warn?1:0,o:b.opp?1:0});}
-  send({k:'snap',W:Math.round(W),H:H,map:mapIdx,score:score,boats:bs,blast:blasts.length?{x:Math.round(blasts[0].x),y:Math.round(blasts[0].y)}:null});
+  send({k:'snap',W:Math.round(W),H:H,map:mapIdx,score:score,boats:bs,blast:(lossAt&&mp.result==='lose')?{x:Math.round(lossAt.x),y:Math.round(lossAt.y)}:null});
 }
 function takeSnap(d){
   // rebuild the other player's harbour exactly as their phone drew it (their screen may be a different shape)
@@ -966,7 +1096,7 @@ function hitBtn(p,x,y,r){return Math.hypot(p.x-x,p.y-y)<r;}
 function hudButtons(){
   if(mp.st==='play')return[['night',W-40,night||mp.used.night],['monster',W-92,mp.used.monster],['ship',W-144,mp.used.ship],['gear',W-196,false]];
   if(mp.result)return[['gear',W-92,false]];
-  return[['pause',W-40,false],['gear',W-92,false]];
+  return[['pause',W-40,false],['gear',W-92,false],['ff',W-144,false]];
 }
 function hudHit(p){var a=hudButtons();for(var i=0;i<a.length;i++)if(hitBtn(p,a[i][1],32,25))return a[i][0];return null;}
 var COOL=20;   // seconds between uses of the one-use buttons
@@ -993,6 +1123,8 @@ function down(e){
   if(hudHit(p))return;
   for(var mi2=0;mi2<monsters.length;mi2++){var mo=monsters[mi2];        // tapping a sea monster drives it off
     if(Math.hypot(p.x-mo.x,p.y-mo.y)<60){mo.hp--;mo.flash=0.12;sfx('pop');if(mo.hp<=0)floats.push({x:mo.x,y:mo.y-30,t:0,text:'Gone!',c:'#fff'});return;}}
+  if(map.pirates){var cn=map.cannon();          // a drag that starts on the cannon aims it
+    if(Math.hypot(p.x-cn.x,p.y-cn.y)<56){aims[e.pointerId]={x:p.x,y:p.y,moved:false};try{cv.setPointerCapture(e.pointerId);}catch(err){}return;}}
   var bestB=null, bd=1e9;
   for(var i=0;i<boats.length;i++){var b=boats[i], d=Math.hypot(b.x-p.x,b.y-p.y);
     if(d<Math.max(62,b.r*2.4)&&d<bd){bd=d;bestB=b;}}
@@ -1004,6 +1136,7 @@ function down(e){
   try{cv.setPointerCapture(e.pointerId);}catch(err){}
 }
 function move(e){
+  if(aims[e.pointerId]){e.preventDefault();var ap=toWorld(e),cn0=map.cannon?map.cannon():null;aims[e.pointerId].x=ap.x;aims[e.pointerId].y=ap.y;if(cn0&&Math.hypot(ap.x-cn0.x,ap.y-cn0.y)>26)aims[e.pointerId].moved=true;return;}
   var b=draws[e.pointerId]; if(!b)return;
   e.preventDefault();
   var p=toWorld(e);
@@ -1026,6 +1159,7 @@ function up(e){
   e.preventDefault();
   audioInit();
   var p=toWorld(e), b=draws[e.pointerId];
+  if(aims[e.pointerId]){var am=aims[e.pointerId];delete aims[e.pointerId];if(am.moved&&state==='play'&&!paused)fireCannon(p.x,p.y);return;}
   if(b){
     delete draws[e.pointerId];
     if(b.path.length&&b.targetIdx<0){
@@ -1044,7 +1178,7 @@ function up(e){
     for(var si=0;si<schips.length;si++){var sc=schips[si];
       if(p.x>sc.x&&p.x<sc.x+sc.w&&p.y>sc.y&&p.y<sc.y+sc.h){
         if(sc.act==='done'){settings=false;if(state==='play'&&mp.st!=='play')paused=false;}
-        else{opts[sc.act]=!opts[sc.act];applyOpts();}
+        else{opts[sc.act]=!opts[sc.act];applyOpts();if(sc.act==='unlock')newMaps=[];}
         return;}}
     return;
   }
@@ -1056,7 +1190,7 @@ function up(e){
         else if(ch.act==='day'){night=false;applyOpts();}
         else if(ch.act==='night'){night=true;applyOpts();}
         else if(ch.act==='settings'){settings=true;}
-        else if(ch.act==='solo'){mpLeave();newGame();}
+        else if(ch.act==='solo'){if(isOpen(mapIdx)){mpLeave();newGame();}else menuHint={t:clock};}
         else if(ch.act==='mp'){enterLobby();}
         else if(ch.act==='host'){hostGame();}
         else if(ch.act==='join'){mp.st='join';mp.entry='';mp.err='';}
@@ -1067,13 +1201,14 @@ function up(e){
         else if(ch.act==='close'){review=true;viewOpp=!!(mp.snap&&mp.result==='win');}
         else if(ch.act==='stats'){review=false;}
         else if(ch.act==='view'){viewOpp=!viewOpp;}
-        else{review=false;mpLeave();state='menu';boats=[];pend=[];hazards=[];}
+        else{review=false;mpLeave();state='menu';boats=[];pend=[];hazards=[];pirates=[];balls=[];}
         return;}}
     return;
   }
   if(state==='play'){
     var hb=hudHit(p);
     if(hb==='pause'){paused=!paused;return;}
+    if(hb==='ff'){ff=!ff;return;}
     if(hb==='gear'){settings=true;if(mp.st!=='play')paused=true;return;}
     if(hb){fire(hb);return;}          // fire() ignores a button that has been used
     if(paused){paused=false;}
@@ -1085,7 +1220,7 @@ cv.addEventListener('pointerup',up);
 // extra chances to start or wake the sound: iOS only allows it from inside a touch
 document.addEventListener('touchend',audioInit,{passive:true});
 document.addEventListener('click',audioInit);
-cv.addEventListener('pointercancel',function(e){delete draws[e.pointerId];});
+cv.addEventListener('pointercancel',function(e){delete draws[e.pointerId];delete aims[e.pointerId];});
 cv.addEventListener('contextmenu',function(e){e.preventDefault();});
 document.addEventListener('touchmove',function(e){e.preventDefault();},{passive:false});
 document.addEventListener('visibilitychange',function(){if(document.hidden&&state==='play'&&mp.st!=='play')paused=true;if(!document.hidden&&AC)audioInit();});
@@ -1193,8 +1328,8 @@ function drawNight(){
   ctx.restore();
 }
 function drawSettings(){
-  var k=Math.min(1,(H-16)/340), i; ctx.save(); ctx.translate(W/2,H/2); ctx.scale(k,k); ctx.translate(-W/2,-H/2);
-  var p=panel(Math.min(470,W-40),340), cx=W/2, y=p.y, rows=[['Music','music'],['Sea sounds (waves, gulls)','amb'],['All sound','all']];
+  var k=Math.min(1,(H-16)/386), i; ctx.save(); ctx.translate(W/2,H/2); ctx.scale(k,k); ctx.translate(-W/2,-H/2);
+  var p=panel(Math.min(470,W-40),386), cx=W/2, y=p.y, rows=[['Music','music'],['Sea sounds (waves, gulls)','amb'],['All sound','all'],['All maps unlocked','unlock']];
   text('Settings',cx,y+50,38,'#1d3b4a','center'); schips=[];
   for(i=0;i<rows.length;i++){
     var ry=y+102+i*46, on=opts[rows[i][1]], sx=cx+128;
@@ -1208,8 +1343,8 @@ function drawSettings(){
   }
   // what the phone's sound system reports, to help when a phone is silent
   var st=!AC?'not started yet \u2013 tap anywhere':AC.state==='running'?'running':AC.state==='suspended'?'waiting for a tap':AC.state;
-  uiText('Sound system: '+st,cx,y+244,13,AC&&AC.state==='running'?'#5d7a5d':'#a83a1b','center','600');
-  button('Done',cx,y+290); schips.push({x:cx-110,y:y+259,w:220,h:60,act:'done'});
+  uiText('Sound system: '+st,cx,y+290,13,AC&&AC.state==='running'?'#5d7a5d':'#a83a1b','center','600');
+  button('Done',cx,y+336); schips.push({x:cx-110,y:y+305,w:220,h:60,act:'done'});
   ctx.restore(); fitChips(k,schips);
 }
 function gearIcon(x,y){
@@ -1241,9 +1376,10 @@ function drawHUD(){
   for(bi=0;bi<hb.length;bi++){id=hb[bi][0];bx=hb[bi][1];
     var weapon=id==='night'||id==='monster'||id==='ship', spent=hb[bi][2], cooling=weapon&&!spent&&mp.cool>0;
     ctx.globalAlpha=spent?0.3:cooling?0.55:1;
-    ctx.fillStyle=weapon?'#16233f':'rgba(255,252,240,.92)'; ctx.beginPath(); ctx.arc(bx,32,20,0,7); ctx.fill();
+    ctx.fillStyle=weapon?'#16233f':(id==='ff'&&ff)?'#f3b61f':'rgba(255,252,240,.92)'; ctx.beginPath(); ctx.arc(bx,32,20,0,7); ctx.fill();
     ctx.strokeStyle=weapon?'rgba(255,246,196,'+(spent||cooling?0.4:0.5+0.5*pu).toFixed(2)+')':'rgba(90,70,40,.35)'; ctx.lineWidth=weapon?2.5:1.5; ctx.stroke();
     if(id==='gear')gearIcon(bx,32);
+    else if(id==='ff'){ctx.fillStyle='#1d3b4a';for(var fq=0;fq<2;fq++){ctx.beginPath();ctx.moveTo(bx-9+fq*9,24);ctx.lineTo(bx+fq*9,32);ctx.lineTo(bx-9+fq*9,40);ctx.closePath();ctx.fill();}}
     else if(id==='pause'){ctx.fillStyle='#1d3b4a';
       if(paused){ctx.beginPath();ctx.moveTo(bx-6,23);ctx.lineTo(bx+9,32);ctx.lineTo(bx-6,41);ctx.closePath();ctx.fill();}
       else{ctx.fillRect(bx-7,24,5,16);ctx.fillRect(bx+2,24,5,16);}}
@@ -1308,18 +1444,19 @@ function render(){
   for(i=0;i<boats.length;i++)drawTrail(boats[i]);
   if(!nightOn)for(i=0;i<boats.length;i++)drawPath(boats[i]);
   for(i=0;i<boats.length;i++)drawBoat(boats[i]);
+  if(map.pirates){drawCannon();for(i=0;i<pirates.length;i++)drawPirate(pirates[i]);}
   for(i=0;i<surf.length;i++)drawSurf(surf[i]);
   for(i=0;i<monsters.length;i++)drawMonster(monsters[i]);
   for(i=0;i<hazards.length;i++){if(hazards[i].k==='spout')drawSpout(hazards[i]);else if(hazards[i].k==='cyclone')drawCyclone(hazards[i]);}
   if(nightOn){drawNight();for(i=0;i<boats.length;i++)drawPath(boats[i]);}   // course lines stay bright in the dark
   for(i=0;i<floats.length;i++){var f=floats[i];ctx.globalAlpha=1-f.t;uiText(f.text,f.x,f.y-f.t*26,20,'#ffffff','center','800');ctx.globalAlpha=1;}
   for(i=0;i<blasts.length;i++){var bl=blasts[i], t=bl.t;
-    if(t<1.2){ctx.globalAlpha=Math.max(0,1-t/1.2);
-      ctx.fillStyle='#ffd166';ctx.beginPath();ctx.arc(bl.x,bl.y,14+t*50,0,7);ctx.fill();
-      ctx.strokeStyle='#ffffff';ctx.lineWidth=5;ctx.beginPath();ctx.arc(bl.x,bl.y,20+t*95,0,7);ctx.stroke();
-      ctx.fillStyle='#e4572e';ctx.beginPath();ctx.arc(bl.x,bl.y,8+t*26,0,7);ctx.fill();ctx.globalAlpha=1;}
+    if(t<1.2){var bz=bl.small?0.5:1; ctx.globalAlpha=Math.max(0,1-t/1.2);
+      ctx.fillStyle='#ffd166';ctx.beginPath();ctx.arc(bl.x,bl.y,(14+t*50)*bz,0,7);ctx.fill();
+      ctx.strokeStyle='#ffffff';ctx.lineWidth=5*bz;ctx.beginPath();ctx.arc(bl.x,bl.y,(20+t*95)*bz,0,7);ctx.stroke();
+      ctx.fillStyle='#e4572e';ctx.beginPath();ctx.arc(bl.x,bl.y,(8+t*26)*bz,0,7);ctx.fill();ctx.globalAlpha=1;}
   }
-  if(state==='over'&&blasts.length)crashMark(blasts[0].x,blasts[0].y);
+  if(state==='over'&&lossAt&&mp.result!=='win'&&mp.result!=='left')crashMark(lossAt.x,lossAt.y);
   }
   if(state==='play'||state==='crash'){
     for(i=0;i<pend.length;i++){var pe=pend[i], pu=1+0.18*Math.sin(clock*11);
@@ -1335,7 +1472,9 @@ function render(){
       if(!plain&&ac.length>1){ctx.fillStyle=CARGO[ac[1]].c;ctx.fillRect(-14,-5,7,10);}
       ctx.strokeStyle='#10202a'; ctx.lineWidth=2.5; ctx.stroke(); ctx.restore();}
     drawHUD();
-    if(nightT>0){ctx.fillStyle='rgba(22,35,63,.9)';rr(ctx,14,58,104,26,13);ctx.fill();uiText('Night  '+Math.ceil(nightT)+'s',66,71.5,13,'#fff6c4','center','700');}
+    var px0=14;
+    if(map.pirates){var lim=PIR[diff].limit;ctx.fillStyle=stolen>=lim-1?'rgba(168,13,5,.92)':'rgba(21,21,27,.88)';rr(ctx,px0,58,112,26,13);ctx.fill();uiText('Stolen  '+stolen+' / '+lim,px0+56,71.5,13,'#ffffff','center','700');px0+=120;}
+    if(nightT>0){ctx.fillStyle='rgba(22,35,63,.9)';rr(ctx,px0,58,104,26,13);ctx.fill();uiText('Night  '+Math.ceil(nightT)+'s',px0+52,71.5,13,'#fff6c4','center','700');}
     if(banner){var ba=Math.min(1,banner.t/0.3)*Math.min(1,(3-banner.t)/0.8);ctx.globalAlpha=Math.max(0,ba);ctx.font='600 40px Georgia,"Palatino Linotype",Palatino,serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineJoin='round';ctx.lineWidth=7;ctx.strokeStyle='rgba(8,30,48,.85)';ctx.strokeText(banner.text,W/2,H*0.3);ctx.fillStyle='#fff6c4';ctx.fillText(banner.text,W/2,H*0.3);ctx.globalAlpha=1;}
     if(paused){ctx.fillStyle='rgba(10,45,60,.5)';ctx.fillRect(0,0,W,H);text('Paused',W/2,H/2-10,54,'#fffaf0','center');uiText('Tap to carry on',W/2,H/2+38,20,'#fffaf0','center','500');}
   }
@@ -1343,19 +1482,26 @@ function render(){
     var PH=404, km=Math.min(1,(H-16)/PH); ctx.save(); ctx.translate(W/2,H/2); ctx.scale(km,km); ctx.translate(-W/2,-H/2);
     var pw=Math.min(640,W-40), p=panel(pw,PH), cx=W/2, y=p.y;
     chips=[];
-    function pick(label,x,yy,w,on,fill,ink,act,extra){
+    function pick(label,x,yy,w,on,fill,ink,act,extra,shift){
       ctx.fillStyle=on?fill:'#efe6cd'; rr(ctx,x,yy,w,34,17); ctx.fill();
       ctx.strokeStyle=on?fill:'#c9b383'; ctx.lineWidth=2; ctx.stroke();
-      uiText(label,x+w/2,yy+17.5,w<110?14:15,on?ink:'#6b5a3c','center','700');
+      uiText(label,x+w/2-(shift||0),yy+17.5,shift?13.5:w<110?14:15,on?ink:'#6b5a3c','center','700');
       var c={x:x-4,y:yy-5,w:w+8,h:44,act:act}; if(extra!==undefined)c.map=extra; chips.push(c);
     }
     text('Safe Harbour',cx,y+50,50,'#1d3b4a','center');
     uiText('Drag from a ship to draw its course. Match each crate to its dock. Keep the ships apart.',cx,y+90,14,'#6b5a3c','center','500');
     // maps, three to a row
-    var per=3, cw=Math.floor((pw-56-(per-1)*8)/per);
-    for(var mi=0;mi<MAPS.length;mi++){
-      var row=(mi/per)|0, inRow=Math.min(per,MAPS.length-row*per);
-      pick(MAPS[mi].name,cx-(inRow*cw+(inRow-1)*8)/2+(mi%per)*(cw+8),y+112+row*42,cw,mi===mapIdx,'#1d3b4a','#fffaf0','map',mi);
+    var per=4, cw=Math.floor((pw-56-(per-1)*8)/per);
+    // shown in the order they open
+    var order=[]; for(var oi=0;oi<MAPS.length;oi++)order.push(oi); order.sort(function(a,b){return (MAPS[a].unlock||0)-(MAPS[b].unlock||0)||a-b;});
+    for(var ms=0;ms<order.length;ms++){
+      var mi=order[ms], row=(ms/per)|0, inRow=Math.min(per,MAPS.length-row*per);
+      var mx=cx-(inRow*cw+(inRow-1)*8)/2+(ms%per)*(cw+8), my=y+112+row*42, open=isOpen(mi);
+      pick(MAPS[mi].name,mx,my,cw,mi===mapIdx,open?'#1d3b4a':'#7d8790','#fffaf0','map',mi,open?0:9);
+      if(!open){          // a padlock on maps not yet opened for solo play
+        ctx.fillStyle='rgba(239,230,205,.55)'; if(mi!==mapIdx){rr(ctx,mx,my,cw,34,17);ctx.fill();}
+        var lkx=mx+cw-15, lky=my+18, lc=mi===mapIdx?'#fffaf0':'#6b5a3c';
+        ctx.fillStyle=lc; ctx.fillRect(lkx-5,lky-3,10,8); ctx.strokeStyle=lc; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(lkx,lky-4,3.4,Math.PI,0); ctx.stroke();}
     }
     // light and difficulty
     var ry0=y+112+Math.ceil(MAPS.length/per)*42+22, lx0=cx-pw/2+28, rx0=cx+pw/2-28-3*96-16;
@@ -1368,10 +1514,14 @@ function render(){
     ctx.fillStyle='#efe6cd'; ctx.beginPath(); ctx.arc(gx,gy,3.4,0,7); ctx.fill();
     chips.push({x:gx-26,y:gy-26,w:52,h:52,act:'settings'});
     var by0=ry0+86;
-    button('Set sail',cx-122,by0); chips.push({x:cx-232,y:by0-31,w:220,h:60,act:'solo'});
+    var canSail=isOpen(mapIdx);
+    if(!canSail)ctx.globalAlpha=0.4; button(canSail?'Set sail':'Locked',cx-122,by0); ctx.globalAlpha=1; chips.push({x:cx-232,y:by0-31,w:220,h:60,act:'solo'});
     button('Two players',cx+122,by0,true); chips.push({x:cx+12,y:by0-31,w:220,h:60,act:'mp'});
     if(rot)uiText('Best played with the phone held sideways',cx,by0+46,13,'#8a7a5c','center','500');
-    else if(best>0)uiText('Best on '+D.name+': '+best,cx,by0+46,14,'#8a7a5c','center','600');
+    else if(!canSail){var hot=menuHint&&clock-menuHint.t<1.5;
+      uiText(map.name+' opens for solo play at '+map.unlock+' cargo landed. You have '+total+'.',cx,by0+46,hot?15:14,hot?'#a83a1b':'#8a7a5c','center','700');}
+    else{var nx2=nextUnlock();
+      uiText((best>0?'Best here on '+D.name+': '+best+'   \u00b7   ':'')+'Total cargo landed: '+total+(nx2&&!opts.unlock?'   \u00b7   next map at '+nx2:''),cx,by0+46,13.5,'#8a7a5c','center','600');}
     ctx.restore(); fitChips(km);
   }
   if(state==='over'&&review){
@@ -1391,13 +1541,16 @@ function render(){
   if(state==='over'&&!review){
     var ko=Math.min(1,(H-16)/412); ctx.save(); ctx.translate(W/2,H/2); ctx.scale(ko,ko); ctx.translate(-W/2,-H/2);
     var q=panel(Math.min(520,W-60),412), c2=W/2, two=!!mp.result;
-    var head=mp.result==='win'?'You win!':mp.result==='left'?'Opponent left':'Collision!';
+    var head=mp.result==='win'?'You win!':mp.result==='left'?'Opponent left':lossKind==='plunder'?'Plundered!':'Collision!';
     text(head,c2,q.y+58,50,mp.result==='win'?'#1d5a73':'#a83a1b','center');
     uiText('Cargo landed',c2-90,q.y+122,17,'#6b5a3c','center','500'); uiText(String(score),c2-90,q.y+160,44,'#1d3b4a','center','700');
-    uiText(two?'Ships sent over':'Ships sent off',c2+90,q.y+122,17,'#6b5a3c','center','500'); uiText(String(two?mp.sent:away),c2+90,q.y+160,44,'#1d3b4a','center','700');
+    uiText(two?'Ships sent over':map.pirates?'Pirates sunk':'Ships sent off',c2+90,q.y+122,17,'#6b5a3c','center','500'); uiText(String(two?mp.sent:map.pirates?sunk:away),c2+90,q.y+160,44,'#1d3b4a','center','700');
     if(two)uiText(mp.gone&&mp.result!=='left'?'The other player has left':mp.theirAgain?'The other player wants a rematch!':mp.result==='win'?'Their harbour had a collision':mp.result==='left'?'The other player has gone':'Your opponent wins this one',c2,q.y+244,16,mp.theirAgain&&!mp.gone?'#1d5a73':'#6b5a3c','center','600');
     if(two){uiText('You',c2-70,q.y+209,17,'#6b5a3c','right','600');uiText((mp.wins||0)+'  \u2013  '+(mp.losses||0),c2,q.y+208,30,'#1d3b4a','center','800');uiText('Them',c2+70,q.y+209,17,'#6b5a3c','left','600');}
-    else uiText(score>=best&&score>0?'A new best!':'Best: '+best,c2,q.y+226,18,score>=best&&score>0?'#a83a1b':'#6b5a3c','center','600');
+    else{uiText(score>=best&&score>0?'A new best for this map!':'Best here on '+D.name+': '+best,c2,q.y+214,18,score>=best&&score>0?'#a83a1b':'#6b5a3c','center','600');
+      var nu=nextUnlock();
+      if(newMaps.length)uiText('New map unlocked: '+newMaps.join(', ')+'!',c2,q.y+244,16,'#1f7a55','center','700');
+      else uiText('Total cargo landed: '+total+(nu&&!opts.unlock?'  \u00b7  next map at '+nu:''),c2,q.y+244,14,'#8a7a5c','center','600');}
     button(two?(mp.gone?'New game':'Rematch'):'Play again',c2,q.y+304);
     ctx.fillStyle='#efe6cd'; rr(ctx,c2-75,q.y+350,150,36,18); ctx.fill(); ctx.strokeStyle='#c9b383'; ctx.lineWidth=2; ctx.stroke();
     uiText('Menu',c2,q.y+368,15,'#6b5a3c','center','600');
@@ -1463,13 +1616,15 @@ function render(){
 var lastT=0;
 function frame(t){
   var dt=Math.min(0.05,(t-lastT)/1000||0); lastT=t;
-  update(dt); render();
+  update(dt);
+  if(ff&&state==='play'&&mp.st!=='play'&&!paused)update(dt);     // fast-forward: the solo game runs at double speed
+  render();
   requestAnimationFrame(frame);
 }
 resize();
 // an invite link ends in #CODE: go straight to joining that game
 (function(){var h=(location.hash||'').replace('#','').toUpperCase();if(/^[A-Z]{4}$/.test(h)){try{history.replaceState(null,'',location.pathname+location.search);}catch(e){}enterLobby();joinGame(h);}})();
-window.__hm={get mp(){return mp;},get pend(){return pend;},enterLobby:enterLobby,hostGame:hostGame,joinGame:joinGame,get chips(){return chips;},get monsters(){return monsters;},get surf(){return surf;},hudButtons:hudButtons,addMonster:addMonster,addSurf:addSurf,get schips(){return schips;},get settings(){return settings;},get opts(){return opts;},get night(){return night;},set night(v){night=v;},get diff(){return diff;},setDiff:setDiff,get dk(){return dk;},get nightT(){return nightT;},get paused(){return paused;},get hazards(){return hazards;},spawnHazard:spawnHazard,set hazT(v){hazT=v;},get review(){return [review,viewOpp];},get blasts(){return blasts;},get boats(){return boats;},get berths(){return berths;},get state(){return state;},get score(){return score;},get away(){return away;},get W(){return W;},get H(){return H;},update:update,spawn:spawn,undock:undock,newGame:newGame,setMap:setMap,isLand:function(x,y){return isLand(x,y);},
+window.__hm={get mp(){return mp;},get pend(){return pend;},enterLobby:enterLobby,hostGame:hostGame,joinGame:joinGame,get chips(){return chips;},get pirates(){return pirates;},get balls(){return balls;},get stolen(){return stolen;},get sunk(){return sunk;},get total(){return total;},set total(v){total=v;},get ff(){return ff;},isOpen:isOpen,get lossKind(){return lossKind;},set pirT(v){pirT=v;},fireCannon:fireCannon,frame:frame,get clock(){return clock;},get score(){return score;},get map(){return map;},get monsters(){return monsters;},get surf(){return surf;},hudButtons:hudButtons,addMonster:addMonster,addSurf:addSurf,get schips(){return schips;},get settings(){return settings;},get opts(){return opts;},get night(){return night;},set night(v){night=v;},get diff(){return diff;},setDiff:setDiff,get dk(){return dk;},get nightT(){return nightT;},get paused(){return paused;},get hazards(){return hazards;},spawnHazard:spawnHazard,set hazT(v){hazT=v;},get review(){return [review,viewOpp];},get blasts(){return blasts;},get boats(){return boats;},get berths(){return berths;},get state(){return state;},get score(){return score;},get away(){return away;},get W(){return W;},get H(){return H;},update:update,spawn:spawn,undock:undock,newGame:newGame,setMap:setMap,isLand:function(x,y){return isLand(x,y);},
   set time(v){time=v;}};
 requestAnimationFrame(frame);
 })();
